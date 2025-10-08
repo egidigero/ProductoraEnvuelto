@@ -12,6 +12,9 @@ import { Calendar, MapPin, Clock, Star, CheckCircle, Plus, Minus, ShoppingCart, 
 import { formatPrice } from '@/lib/utils';
 import type { Event, TicketType } from '@/lib/types';
 
+// Force dynamic rendering for this page
+export const dynamic = 'force-dynamic'
+
 export default function EventLandingPage() {
   const router = useRouter();
   const searchParams = useSearchParams();

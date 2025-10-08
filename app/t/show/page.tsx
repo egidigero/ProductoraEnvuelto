@@ -7,6 +7,9 @@ import { Badge } from '@/components/ui/badge';
 import { Loader2, Calendar, MapPin, AlertCircle } from 'lucide-react';
 import Image from 'next/image';
 
+// Force dynamic rendering for this page
+export const dynamic = 'force-dynamic'
+
 export default function ShowTicketPage() {
   const searchParams = useSearchParams();
   const tkn = searchParams.get('tkn');
