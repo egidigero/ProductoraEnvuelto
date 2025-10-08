@@ -1,0 +1,316 @@
+"use client"
+
+import { useState, useEffect, useRef } from "react"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+import { CheckCircle, XCircle, AlertCircle, Camera, Scan } from "lucide-react"
+
+interface ValidationResult {
+  success: boolean
+  ticket?: {
+    id: string
+    attendeeName: string
+    ticketType: string
+    eventName: string
+    status: string
+  }
+  message: string
+}
+
+export default function ScanPage() {
+  const [isScanning, setIsScanning] = useState(false)
+  const [validationResult, setValidationResult] = useState<ValidationResult | null>(null)
+  const [manualToken, setManualToken] = useState("")
+  const [cameraError, setCameraError] = useState<string | null>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+
+  const validateTicket = async (token: string) => {
+    try {
+      const response = await fetch("/api/tickets/validate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ token }),
+      })
+
+      const result = await response.json()
+      setValidationResult(result)
+    } catch (error) {
+      setValidationResult({
+        success: false,
+        message: "Error de conexión. Intenta nuevamente.",
+      })
+    }
+  }
+
+  const handleManualValidation = () => {
+    if (manualToken.trim()) {
+      validateTicket(manualToken.trim())
+      setManualToken("")
+    }
+  }
+
+  const startCameraScanning = async () => {
+    try {
+      setIsScanning(true)
+      setCameraError(null)
+      setValidationResult(null)
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment" }, // Use back camera on mobile
+      })
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        videoRef.current.play()
+
+        // Start scanning for QR codes
+        scanForQRCode()
+      }
+    } catch (error) {
+      console.error("Error accessing camera:", error)
+      setCameraError("No se pudo acceder a la cámara. Usa la entrada manual.")
+      setIsScanning(false)
+    }
+  }
+
+  const stopScanning = () => {
+    setIsScanning(false)
+    if (videoRef.current?.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream
+      stream.getTracks().forEach((track) => track.stop())
+    }
+  }
+
+  const scanForQRCode = () => {
+    if (!isScanning || !videoRef.current || !canvasRef.current) return
+
+    const video = videoRef.current
+    const canvas = canvasRef.current
+    const context = canvas.getContext("2d")
+
+    if (context && video.readyState === video.HAVE_ENOUGH_DATA) {
+      canvas.width = video.videoWidth
+      canvas.height = video.videoHeight
+      context.drawImage(video, 0, 0, canvas.width, canvas.height)
+
+      const imageData = context.getImageData(0, 0, canvas.width, canvas.height)
+
+      // Here you would use a QR code library like @zxing/browser
+      // For now, we'll simulate finding a QR code
+      // In production, replace this with actual QR detection
+
+      setTimeout(() => {
+        // Simulate QR code detection
+        const urlParams = new URLSearchParams(window.location.search)
+        const tokenFromUrl = urlParams.get("tkn")
+
+        if (tokenFromUrl) {
+          validateTicket(tokenFromUrl)
+          stopScanning()
+        } else {
+          // Continue scanning
+          if (isScanning) {
+            requestAnimationFrame(scanForQRCode)
+          }
+        }
+      }, 100)
+    } else {
+      // Continue scanning
+      if (isScanning) {
+        requestAnimationFrame(scanForQRCode)
+      }
+    }
+  }
+
+  useEffect(() => {
+    // Check if there's a token in the URL (from QR scan)
+    const urlParams = new URLSearchParams(window.location.search)
+    const token = urlParams.get("tkn")
+
+    if (token) {
+      validateTicket(token)
+      // Clean URL
+      window.history.replaceState({}, document.title, window.location.pathname)
+    }
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      stopScanning()
+    }
+  }, [])
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case "valid":
+        return "bg-green-500"
+      case "used":
+        return "bg-red-500"
+      case "revoked":
+        return "bg-gray-500"
+      case "expired":
+        return "bg-yellow-500"
+      default:
+        return "bg-gray-500"
+    }
+  }
+
+  const getStatusIcon = (success: boolean) => {
+    if (success) {
+      return <CheckCircle className="w-16 h-16 text-green-500" />
+    } else {
+      return <XCircle className="w-16 h-16 text-red-500" />
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-4">
+      <div className="max-w-md mx-auto space-y-6">
+        {/* Header */}
+        <div className="text-center py-8">
+          <div className="w-16 h-16 mx-auto mb-4 bg-purple-600 rounded-full flex items-center justify-center">
+            <Scan className="w-8 h-8 text-white" />
+          </div>
+          <h1 className="text-2xl font-bold text-white mb-2">Validador de Entradas</h1>
+          <p className="text-purple-200">ON REPEAT - Control de Acceso</p>
+        </div>
+
+        {/* Scanner Section */}
+        <Card className="bg-slate-800 border-purple-500/20">
+          <CardHeader>
+            <CardTitle className="text-white flex items-center gap-2">
+              <Camera className="w-5 h-5" />
+              Escanear QR
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {isScanning && (
+              <div className="relative">
+                <video ref={videoRef} className="w-full h-64 bg-black rounded-lg object-cover" playsInline muted />
+                <canvas ref={canvasRef} className="hidden" />
+                <div className="absolute inset-0 border-2 border-purple-500 rounded-lg pointer-events-none">
+                  <div className="absolute top-4 left-4 w-6 h-6 border-t-2 border-l-2 border-purple-400"></div>
+                  <div className="absolute top-4 right-4 w-6 h-6 border-t-2 border-r-2 border-purple-400"></div>
+                  <div className="absolute bottom-4 left-4 w-6 h-6 border-b-2 border-l-2 border-purple-400"></div>
+                  <div className="absolute bottom-4 right-4 w-6 h-6 border-b-2 border-r-2 border-purple-400"></div>
+                </div>
+                <div className="absolute bottom-2 left-2 right-2 text-center">
+                  <p className="text-white text-sm bg-black/50 rounded px-2 py-1">Apunta la cámara al código QR</p>
+                </div>
+              </div>
+            )}
+
+            {cameraError && (
+              <div className="bg-red-900/20 border border-red-500/30 rounded-lg p-3">
+                <p className="text-red-400 text-sm">{cameraError}</p>
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <Button
+                onClick={isScanning ? stopScanning : startCameraScanning}
+                className={`flex-1 ${isScanning ? "bg-red-600 hover:bg-red-700" : "bg-purple-600 hover:bg-purple-700"}`}
+              >
+                {isScanning ? (
+                  <>
+                    <XCircle className="w-4 h-4 mr-2" />
+                    Detener
+                  </>
+                ) : (
+                  <>
+                    <Camera className="w-4 h-4 mr-2" />
+                    Escanear
+                  </>
+                )}
+              </Button>
+            </div>
+
+            <div className="text-center text-slate-400">
+              <p className="text-sm">o</p>
+            </div>
+
+            <div className="space-y-2">
+              <input
+                type="text"
+                placeholder="Ingresa el código manualmente"
+                value={manualToken}
+                onChange={(e) => setManualToken(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-md text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
+              />
+              <Button
+                onClick={handleManualValidation}
+                variant="outline"
+                className="w-full border-purple-500 text-purple-400 hover:bg-purple-500 hover:text-white bg-transparent"
+              >
+                Validar Código
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Validation Result */}
+        {validationResult && (
+          <Card
+            className={`${validationResult.success ? "bg-green-900/20 border-green-500/30" : "bg-red-900/20 border-red-500/30"}`}
+          >
+            <CardContent className="pt-6">
+              <div className="text-center space-y-4">
+                {getStatusIcon(validationResult.success)}
+
+                <div>
+                  <h3 className={`text-xl font-bold ${validationResult.success ? "text-green-400" : "text-red-400"}`}>
+                    {validationResult.success ? "✅ Entrada Válida" : "❌ Entrada Inválida"}
+                  </h3>
+                  <p className="text-slate-300 mt-2">{validationResult.message}</p>
+                </div>
+
+                {validationResult.ticket && (
+                  <div className="bg-slate-800 rounded-lg p-4 space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-slate-400">Asistente:</span>
+                      <span className="text-white font-medium">{validationResult.ticket.attendeeName}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-slate-400">Tipo:</span>
+                      <Badge className="bg-purple-600">{validationResult.ticket.ticketType.toUpperCase()}</Badge>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-slate-400">Estado:</span>
+                      <Badge className={getStatusColor(validationResult.ticket.status)}>
+                        {validationResult.ticket.status.toUpperCase()}
+                      </Badge>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Instructions */}
+        <Card className="bg-slate-800/50 border-slate-700">
+          <CardContent className="pt-6">
+            <div className="space-y-3 text-sm text-slate-300">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-yellow-500 mt-0.5 flex-shrink-0" />
+                <p>Cada entrada solo puede ser validada una vez</p>
+              </div>
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-yellow-500 mt-0.5 flex-shrink-0" />
+                <p>Verifica que el nombre coincida con el documento</p>
+              </div>
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-yellow-500 mt-0.5 flex-shrink-0" />
+                <p>En caso de problemas, contacta al supervisor</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  )
+}
