@@ -1,33 +1,38 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { generateQRCode } from "@/lib/qr-utils"
+import { generateQRCodeDataURL, generateToken, createTicketURL } from "@/lib/token-utils"
+
+// Force dynamic rendering for this API route
+export const dynamic = 'force-dynamic'
 
 export async function POST(request: NextRequest, { params }: { params: { attendeeId: string } }) {
   try {
-    console.log("[v0] QR generation API called for attendee:", params.attendeeId)
+    console.log("[QR] QR generation API called for attendee:", params.attendeeId)
     const { attendeeId } = params
 
     if (!attendeeId) {
-      console.log("[v0] Missing attendeeId")
+      console.log("[QR] Missing attendeeId")
       return NextResponse.json({ success: false, error: "ID de asistente requerido" }, { status: 400 })
     }
 
-    // En producción, buscarías el attendee en la base de datos
-    // const attendee = await db.attendees.findUnique({ where: { id: attendeeId } })
+    // Generate unique token
+    const token = generateToken()
+    console.log("[QR] Generated token:", token)
 
-    // Mock token - en producción vendría de la base de datos
-    const mockToken = `token-${attendeeId}-${Date.now()}`
-    console.log("[v0] Generated token:", mockToken)
+    // Create ticket URL
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
+    const ticketUrl = createTicketURL(baseUrl, token)
 
-    const qrCodeDataURL = await generateQRCode(mockToken)
-    console.log("[v0] QR code generated successfully")
+    // Generate QR code
+    const qrCodeDataURL = await generateQRCodeDataURL(ticketUrl)
+    console.log("[QR] QR code generated successfully")
 
     return NextResponse.json({
       success: true,
       qrCode: qrCodeDataURL,
-      token: mockToken,
+      token: token,
     })
   } catch (error) {
-    console.error("[v0] Error in QR generation API:", error)
+    console.error("[QR] Error in QR generation API:", error)
     return NextResponse.json(
       {
         success: false,

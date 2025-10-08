@@ -1,121 +1,191 @@
-import { type NextRequest, NextResponse } from "next/server"
-import { hashToken, validateToken } from "@/lib/qr-utils"
+import { NextRequest, NextResponse } from 'next/server'
+import { supabaseAdmin } from '@/lib/supabase-client'
+import { hashToken, isValidToken } from '@/lib/token-utils'
 
+/**
+ * POST /api/tickets/validate
+ * Atomically validate and mark a ticket as used
+ * Prevents double scanning with database-level atomicity
+ */
 export async function POST(request: NextRequest) {
   try {
-    const { token } = await request.json()
+    const body = await request.json()
+    const { token } = body
 
+    // Validate input
     if (!token) {
       return NextResponse.json(
         {
           success: false,
           message: "Token requerido",
         },
-        { status: 400 },
+        { status: 400 }
       )
     }
 
-    // Validar formato del token
-    if (!validateToken(token)) {
-      return NextResponse.json({
-        success: false,
-        message: "Formato de token inválido",
-      })
+    // Validate token format
+    if (!isValidToken(token)) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "Formato de token inválido",
+        },
+        { status: 400 }
+      )
     }
 
-    // Hash del token para buscar en la base de datos
-    const tokenHash = hashToken(token)
+    // Hash the token
+    const token_hash = hashToken(token)
 
-    // Aquí buscarías en la base de datos real
-    // Por ahora simulamos diferentes escenarios
-    const mockTickets = [
-      {
-        id: "1",
-        tokenHash: hashToken("sample-token-123"),
-        attendeeName: "Juan Pérez",
-        ticketType: "vip",
-        eventName: "ON REPEAT - Premium Night Experience",
-        status: "valid",
-      },
-    ]
+    // Get client IP address
+    const remote_addr =
+      request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'unknown'
 
-    const ticket = mockTickets.find((t) => t.tokenHash === tokenHash)
-
-    if (!ticket) {
-      // Log del intento de validación fallido
-      await logValidation(null, "invalid", request)
-
-      return NextResponse.json({
-        success: false,
-        message: "Entrada no encontrada o inválida",
+    // ATOMIC UPDATE: Try to mark ticket as used
+    // This query will only succeed if the ticket is currently 'valid'
+    const { data: updatedTicket, error: updateError } = await supabaseAdmin
+      .from('tickets')
+      .update({
+        status: 'used',
+        used_at: new Date().toISOString(),
       })
+      .eq('token_hash', token_hash)
+      .eq('status', 'valid')
+      .select(
+        `
+        id,
+        status,
+        used_at,
+        order_id,
+        attendee_name,
+        attendee_email,
+        attendee_dni,
+        ticket_type_id,
+        ticket_types (
+          name
+        )
+      `
+      )
+      .single()
+
+    if (updatedTicket) {
+      // SUCCESS: Ticket was valid and is now marked as used
+      const ticketTypeName = (updatedTicket.ticket_types as any)?.name || 'General'
+
+      // Log the validation attempt
+      try {
+        await supabaseAdmin.from('validations').insert({
+          ticket_id: updatedTicket.id,
+          outcome: 'success',
+          device_id: request.headers.get('user-agent') || 'unknown',
+          remote_addr: remote_addr.split(',')[0].trim(),
+          validated_at: new Date().toISOString(),
+        })
+      } catch (logError) {
+        console.error('Error logging validation:', logError)
+      }
+
+      return NextResponse.json(
+        {
+          success: true,
+          message: `Bienvenido/a ${updatedTicket.attendee_name || 'al evento'}`,
+          ticket: {
+            id: updatedTicket.id,
+            attendee_name: updatedTicket.attendee_name,
+            ticket_type: ticketTypeName,
+            used_at: updatedTicket.used_at,
+          },
+        },
+        { status: 200 }
+      )
     }
 
-    // Verificar estado del ticket
-    if (ticket.status === "used") {
-      await logValidation(ticket.id, "already_used", request)
+    // FAILED: Ticket was not valid. Check the reason
+    const { data: existingTicket } = await supabaseAdmin
+      .from('tickets')
+      .select(
+        `
+        id,
+        status,
+        used_at,
+        attendee_name,
+        ticket_types (
+          name
+        )
+      `
+      )
+      .eq('token_hash', token_hash)
+      .single()
 
-      return NextResponse.json({
-        success: false,
-        message: "Esta entrada ya fue utilizada",
-        ticket,
-      })
+    let outcome = 'invalid'
+    let message = 'Entrada no encontrada'
+
+    if (existingTicket) {
+      const ticketTypeName = (existingTicket.ticket_types as any)?.name || 'General'
+
+      switch (existingTicket.status) {
+        case 'used':
+          outcome = 'already_used'
+          message = `Esta entrada ya fue utilizada el ${new Date(existingTicket.used_at!).toLocaleString('es-AR')}`
+          break
+        case 'revoked':
+          outcome = 'revoked'
+          message = 'Esta entrada ha sido revocada'
+          break
+        case 'expired':
+          outcome = 'expired'
+          message = 'Esta entrada ha expirado'
+          break
+        default:
+          outcome = 'invalid'
+          message = 'Esta entrada no es válida'
+      }
+
+      // Log the failed validation attempt
+      try {
+        await supabaseAdmin.from('validations').insert({
+          ticket_id: existingTicket.id,
+          outcome,
+          device_id: request.headers.get('user-agent') || 'unknown',
+          remote_addr: remote_addr.split(',')[0].trim(),
+          validated_at: new Date().toISOString(),
+        })
+      } catch (logError) {
+        console.error('Error logging validation:', logError)
+      }
+
+      return NextResponse.json(
+        {
+          success: false,
+          message,
+          ticket: {
+            id: existingTicket.id,
+            attendee_name: existingTicket.attendee_name,
+            ticket_type: ticketTypeName,
+            status: existingTicket.status,
+            used_at: existingTicket.used_at,
+          },
+        },
+        { status: 400 }
+      )
     }
 
-    if (ticket.status === "revoked") {
-      await logValidation(ticket.id, "revoked", request)
-
-      return NextResponse.json({
-        success: false,
-        message: "Esta entrada ha sido revocada",
-        ticket,
-      })
-    }
-
-    if (ticket.status === "expired") {
-      await logValidation(ticket.id, "expired", request)
-
-      return NextResponse.json({
-        success: false,
-        message: "Esta entrada ha expirado",
-        ticket,
-      })
-    }
-
-    // Marcar ticket como usado
-    // En la base de datos real actualizarías el status y used_at
-    ticket.status = "used"
-
-    // Log de validación exitosa
-    await logValidation(ticket.id, "success", request)
-
-    return NextResponse.json({
-      success: true,
-      message: `Bienvenido/a ${ticket.attendeeName}`,
-      ticket,
-    })
-  } catch (error) {
-    console.error("Error validating ticket:", error)
+    // Ticket not found at all
     return NextResponse.json(
       {
         success: false,
-        message: "Error interno del servidor",
+        message: 'Entrada no encontrada o inválida',
       },
-      { status: 500 },
+      { status: 404 }
+    )
+  } catch (error) {
+    console.error('Unexpected error during validation:', error)
+    return NextResponse.json(
+      {
+        success: false,
+        message: 'Error interno del servidor',
+      },
+      { status: 500 }
     )
   }
-}
-
-async function logValidation(ticketId: string | null, outcome: string, request: NextRequest) {
-  // Aquí guardarías el log en la base de datos
-  const validationLog = {
-    ticketId,
-    outcome,
-    deviceId: request.headers.get("user-agent") || "unknown",
-    remoteAddr: request.headers.get("x-forwarded-for") || request.headers.get("x-real-ip") || "unknown",
-    validatedAt: new Date().toISOString(),
-  }
-
-  console.log("Validation log:", validationLog)
-  // En producción: guardar en la tabla validations
 }

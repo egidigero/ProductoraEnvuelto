@@ -1,58 +1,72 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
-import { Calendar, MapPin, Clock, Star, CheckCircle, Plus, Minus, ShoppingCart, HelpCircle } from "lucide-react"
+import { Calendar, MapPin, Clock, Star, CheckCircle, Plus, Minus, ShoppingCart, HelpCircle, Loader2 } from "lucide-react"
 import Image from "next/image"
+import { formatPrice } from "@/lib/utils"
 
 interface TicketType {
   id: string
   name: string
-  description: string
-  basePrice: number
-  finalPrice: number
+  description: string | null
+  base_price: number
+  service_fee: number
+  final_price: number
   features: string[]
-  variant: "default" | "primary" | "accent"
-  popular?: boolean
+  status: string
+  is_popular: boolean
+  capacity: number
+  sold_count: number
+  available: number
 }
 
-const ticketTypes: TicketType[] = [
-  {
-    id: "general",
-    name: "General",
-    description: "Acceso completo al evento",
-    basePrice: 15000,
-    finalPrice: 15850,
-    variant: "default",
-    features: ["Acceso a todas las áreas", "Acceso hasta las 2 AM", "Guardarropa incluido"],
-  },
-  {
-    id: "vip",
-    name: "VIP",
-    description: "Experiencia premium exclusiva",
-    basePrice: 25000,
-    finalPrice: 26250,
-    variant: "primary",
-    popular: true,
-    features: ["Acceso VIP exclusivo", "Barra premium ilimitada", "Mesa reservada", "Acceso hasta las 2 AM"],
-  },
-  {
-    id: "early",
-    name: "Early Bird",
-    description: "Oferta por tiempo limitado",
-    basePrice: 10000,
-    finalPrice: 10850,
-    variant: "accent",
-    features: ["Acceso general", "Acceso hasta 1 AM", "Entrada prioritaria"],
-  },
-]
+interface Attendee {
+  firstName: string
+  lastName: string
+  dni: string
+  ticketTypeId: string
+  ticketTypeName: string
+}
 
 export default function EventLandingPage() {
+  const [ticketTypes, setTicketTypes] = useState<TicketType[]>([])
+  const [loading, setLoading] = useState(true)
   const [cart, setCart] = useState<Record<string, number>>({})
   const [showPreview, setShowPreview] = useState(false)
+  const [processing, setProcessing] = useState(false)
+  const [showAttendeeForm, setShowAttendeeForm] = useState(false)
+  
+  // Email único para todos los tickets
+  const [buyerEmail, setBuyerEmail] = useState("")
+  
+  // Lista de asistentes (uno por cada ticket)
+  const [attendees, setAttendees] = useState<Attendee[]>([])
+
+  // Cargar tipos de tickets dinámicamente al montar el componente
+  useEffect(() => {
+    const fetchTicketTypes = async () => {
+      try {
+        const response = await fetch('/api/ticket-types')
+        const data = await response.json()
+        
+        if (response.ok && data.ticket_types) {
+          setTicketTypes(data.ticket_types)
+        } else {
+          console.error('Error loading ticket types:', data.error)
+        }
+      } catch (error) {
+        console.error('Error fetching ticket types:', error)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchTicketTypes()
+  }, [])
 
   const updateQuantity = (ticketId: string, quantity: number) => {
     if (quantity <= 0) {
@@ -71,15 +85,128 @@ export default function EventLandingPage() {
   const getTotalPrice = () => {
     return Object.entries(cart).reduce((sum, [ticketId, qty]) => {
       const ticket = ticketTypes.find((t) => t.id === ticketId)
-      return sum + (ticket ? ticket.finalPrice * qty : 0)
+      return sum + (ticket ? ticket.final_price * qty : 0)
     }, 0)
   }
 
   const getTotalBasePrice = () => {
     return Object.entries(cart).reduce((sum, [ticketId, qty]) => {
       const ticket = ticketTypes.find((t) => t.id === ticketId)
-      return sum + (ticket ? ticket.basePrice * qty : 0)
+      return sum + (ticket ? ticket.base_price * qty : 0)
     }, 0)
+  }
+
+  // Verificar si un ticket está agotado o inactivo
+  const isTicketSoldOut = (ticket: TicketType) => {
+    return ticket.status === 'sold_out' || ticket.status === 'inactive' || ticket.available <= 0
+  }
+
+  // Inicializar o actualizar formulario de asistentes (mantiene datos existentes)
+  const initializeAttendeeForm = () => {
+    const newAttendees: Attendee[] = []
+    const existingAttendeesMap = new Map(
+      attendees.map(a => [`${a.ticketTypeId}-${a.firstName}-${a.lastName}-${a.dni}`, a])
+    )
+    
+    Object.entries(cart).forEach(([ticketTypeId, quantity]) => {
+      const ticket = ticketTypes.find(t => t.id === ticketTypeId)
+      if (ticket) {
+        // Mantener asistentes existentes de este tipo
+        const existingOfThisType = attendees.filter(a => a.ticketTypeId === ticketTypeId)
+        
+        for (let i = 0; i < quantity; i++) {
+          if (i < existingOfThisType.length) {
+            // Mantener datos existentes
+            newAttendees.push(existingOfThisType[i])
+          } else {
+            // Agregar nuevo asistente vacío
+            newAttendees.push({
+              firstName: "",
+              lastName: "",
+              dni: "",
+              ticketTypeId: ticketTypeId,
+              ticketTypeName: ticket.name
+            })
+          }
+        }
+      }
+    })
+    
+    setAttendees(newAttendees)
+    setShowAttendeeForm(true)
+  }
+
+  // Sincronizar carrito con formulario de asistentes cuando cambia el carrito
+  useEffect(() => {
+    if (showAttendeeForm) {
+      initializeAttendeeForm()
+    }
+  }, [cart])
+
+  // Actualizar datos de un asistente
+  const updateAttendee = (index: number, field: keyof Attendee, value: string) => {
+    const newAttendees = [...attendees]
+    newAttendees[index] = { ...newAttendees[index], [field]: value }
+    setAttendees(newAttendees)
+  }
+
+  // Procesar compra (simulando pago exitoso)
+  const handlePurchase = async () => {
+    if (!buyerEmail.trim()) {
+      alert("Por favor ingresa un email")
+      return
+    }
+
+    // Validar que todos los asistentes tengan datos completos
+    for (let i = 0; i < attendees.length; i++) {
+      const attendee = attendees[i]
+      if (!attendee.firstName.trim() || !attendee.lastName.trim() || !attendee.dni.trim()) {
+        alert(`Por favor completa todos los datos del asistente ${i + 1}`)
+        return
+      }
+    }
+
+    setProcessing(true)
+
+    try {
+      // Crear orden con todos los asistentes
+      const response = await fetch('/api/tickets/purchase', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          buyer_email: buyerEmail,
+          attendees: attendees,
+          simulate_payment: true // Para simular pago exitoso sin MercadoPago
+        })
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Error al procesar la compra')
+      }
+
+      // Redirigir a página de éxito
+      window.location.href = `/success?order_id=${data.order_id}&order_reference=${data.order_reference}`
+
+    } catch (error: any) {
+      console.error('Error al procesar compra:', error)
+      alert(error.message || 'Error al procesar la compra. Por favor intenta nuevamente.')
+    } finally {
+      setProcessing(false)
+    }
+  }
+
+  // Mostrar loader mientras carga
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-center space-y-4">
+          <Loader2 className="w-12 h-12 animate-spin text-primary mx-auto" />
+          <p className="text-muted-foreground">Cargando experiencias...</p>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -171,106 +298,129 @@ export default function EventLandingPage() {
             </p>
           </div>
 
-          <div className="grid md:grid-cols-3 gap-8 mb-12">
-            {ticketTypes.map((ticket) => (
-              <Card
-                key={ticket.id}
-                className={`relative border-border bg-card hover:border-primary/50 transition-colors ${
-                  ticket.popular ? "border-primary shadow-lg shadow-primary/20 scale-105" : ""
-                } ${ticket.id === "early" ? "opacity-75" : ""}`}
-              >
-                {ticket.popular && (
-                  <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
-                    <Badge className="bg-primary text-primary-foreground px-4 py-1">
-                      <Star className="w-3 h-3 mr-1" />
-                      Más Popular
-                    </Badge>
-                  </div>
-                )}
+          {ticketTypes.length === 0 ? (
+            <Card className="max-w-md mx-auto">
+              <CardContent className="pt-6 text-center">
+                <p className="text-muted-foreground">No hay tipos de entradas disponibles en este momento.</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid md:grid-cols-3 gap-8 mb-12">
+              {ticketTypes.map((ticket) => {
+                const isSoldOut = isTicketSoldOut(ticket)
+                const isLowStock = ticket.available > 0 && ticket.available <= 10
 
-                {ticket.id === "early" && (
-                  <div className="absolute inset-0 bg-background/80 backdrop-blur-sm rounded-lg flex items-center justify-center z-10">
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-destructive mb-2">AGOTADO</div>
-                      <div className="text-sm text-muted-foreground">Oferta finalizada</div>
-                    </div>
-                  </div>
-                )}
-
-                <CardHeader>
-                  <CardTitle className={`text-xl ${ticket.popular ? "text-primary" : ""}`}>{ticket.name}</CardTitle>
-                  <CardDescription>{ticket.description}</CardDescription>
-                </CardHeader>
-
-                <CardContent className="space-y-4">
-                  <div className="text-3xl font-bold">
-                    {ticket.id === "early" && (
-                      <span className="line-through text-muted-foreground text-xl">$12.000</span>
+                return (
+                  <Card
+                    key={ticket.id}
+                    className={`relative border-border bg-card hover:border-primary/50 transition-colors ${
+                      ticket.is_popular ? "border-primary shadow-lg shadow-primary/20 scale-105" : ""
+                    } ${isSoldOut ? "opacity-75" : ""}`}
+                  >
+                    {ticket.is_popular && (
+                      <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
+                        <Badge className="bg-primary text-primary-foreground px-4 py-1">
+                          <Star className="w-3 h-3 mr-1" />
+                          Más Popular
+                        </Badge>
+                      </div>
                     )}
-                    {ticket.id === "early" && <br />}${ticket.basePrice.toLocaleString()}
-                    <span className="text-sm text-muted-foreground font-normal"> + servicio</span>
-                  </div>
-                  <div
-                    className={`text-2xl font-semibold ${ticket.variant === "accent" ? "text-accent" : "text-primary"}`}
-                  >
-                    Total: ${ticket.finalPrice.toLocaleString()}
-                  </div>
-                  {ticket.id === "early" && (
-                    <Badge variant="destructive" className="text-xs">
-                      ¡Últimas 24 horas!
-                    </Badge>
-                  )}
-                  <ul className="space-y-2 text-sm text-muted-foreground">
-                    {ticket.features.map((feature, index) => (
-                      <li key={index} className="flex items-center gap-2">
-                        <CheckCircle className="w-4 h-4 text-primary" />
-                        {feature}
-                      </li>
-                    ))}
-                  </ul>
-                </CardContent>
 
-                <CardFooter className="flex flex-col gap-3">
-                  <div className="flex items-center justify-center gap-3 w-full">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => updateQuantity(ticket.id, (cart[ticket.id] || 0) - 1)}
-                      disabled={!cart[ticket.id] || ticket.id === "early"}
-                    >
-                      <Minus className="w-4 h-4" />
-                    </Button>
-                    <span className="w-8 text-center font-medium">{cart[ticket.id] || 0}</span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => updateQuantity(ticket.id, (cart[ticket.id] || 0) + 1)}
-                      disabled={ticket.id === "early"}
-                    >
-                      <Plus className="w-4 h-4" />
-                    </Button>
-                  </div>
+                    {isSoldOut && (
+                      <div className="absolute inset-0 bg-background/80 backdrop-blur-sm rounded-lg flex items-center justify-center z-10">
+                        <div className="text-center">
+                          <div className="text-2xl font-bold text-destructive mb-2">AGOTADO</div>
+                          <div className="text-sm text-muted-foreground">
+                            {ticket.sold_count}/{ticket.capacity} vendidas
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
-                  <Button
-                    className={`w-full ${
-                      ticket.variant === "accent"
-                        ? "bg-accent hover:bg-accent/90 text-accent-foreground"
-                        : "bg-primary hover:bg-primary/90"
-                    }`}
-                    onClick={() => {
-                      updateQuantity(ticket.id, (cart[ticket.id] || 0) + 1)
-                      setShowPreview(true)
-                    }}
-                    disabled={ticket.id === "early"}
-                  >
-                    {ticket.id === "early" ? "No Disponible" : "Agregar al Carrito"}
-                  </Button>
-                </CardFooter>
-              </Card>
-            ))}
-          </div>
+                    <CardHeader>
+                      <CardTitle className={`text-xl ${ticket.is_popular ? "text-primary" : ""}`}>
+                        {ticket.name}
+                      </CardTitle>
+                      <CardDescription>{ticket.description || "Experiencia única"}</CardDescription>
+                    </CardHeader>
 
-          {getTotalItems() > 0 && (
+                    <CardContent className="space-y-4">
+                      <div className="text-3xl font-bold">
+                        {formatPrice(ticket.base_price)}
+                        <span className="text-sm text-muted-foreground font-normal"> + servicio</span>
+                      </div>
+                      <div className="text-2xl font-semibold text-primary">
+                        Total: {formatPrice(ticket.final_price)}
+                      </div>
+                      
+                      {/* Indicador de disponibilidad */}
+                      {!isSoldOut && (
+                        <div className="text-sm space-y-1">
+                          {isLowStock ? (
+                            <Badge variant="destructive" className="text-xs">
+                              ¡Solo quedan {ticket.available} entradas!
+                            </Badge>
+                          ) : (
+                            <div className="text-muted-foreground">
+                              {ticket.available} disponibles de {ticket.capacity}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Features */}
+                      {ticket.features && ticket.features.length > 0 && (
+                        <ul className="space-y-2 text-sm text-muted-foreground">
+                          {ticket.features.map((feature, index) => (
+                            <li key={index} className="flex items-center gap-2">
+                              <CheckCircle className="w-4 h-4 text-primary" />
+                              {feature}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </CardContent>
+
+                    <CardFooter className="flex flex-col gap-3">
+                      <div className="flex items-center justify-center gap-3 w-full">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => updateQuantity(ticket.id, (cart[ticket.id] || 0) - 1)}
+                          disabled={!cart[ticket.id] || isSoldOut}
+                        >
+                          <Minus className="w-4 h-4" />
+                        </Button>
+                        <span className="w-8 text-center font-medium">{cart[ticket.id] || 0}</span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => updateQuantity(ticket.id, (cart[ticket.id] || 0) + 1)}
+                          disabled={isSoldOut}
+                        >
+                          <Plus className="w-4 h-4" />
+                        </Button>
+                      </div>
+
+                      <Button
+                        className="w-full bg-primary hover:bg-primary/90"
+                        onClick={() => {
+                          updateQuantity(ticket.id, (cart[ticket.id] || 0) + 1)
+                          setShowPreview(true)
+                        }}
+                        disabled={isSoldOut}
+                      >
+                        {isSoldOut ? "No Disponible" : "Agregar al Carrito"}
+                      </Button>
+                    </CardFooter>
+                  </Card>
+                )
+              })}
+            </div>
+          )}
+
+          {/* Resumen de compra */}
+          {getTotalItems() > 0 && !showAttendeeForm && (
             <Card className="max-w-2xl mx-auto border-primary/50 bg-card/50 backdrop-blur-sm">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -278,42 +428,176 @@ export default function EventLandingPage() {
                   Resumen de Compra
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
-                {Object.entries(cart).map(([ticketId, quantity]) => {
-                  const ticket = ticketTypes.find((t) => t.id === ticketId)
-                  if (!ticket) return null
+              <CardContent className="space-y-6">
+                {/* Items del carrito */}
+                <div className="space-y-2">
+                  {Object.entries(cart).map(([ticketId, quantity]) => {
+                    const ticket = ticketTypes.find((t) => t.id === ticketId)
+                    if (!ticket) return null
 
-                  return (
-                    <div key={ticketId} className="flex justify-between items-center py-2 border-b border-border/50">
-                      <div>
-                        <span className="font-medium">{ticket.name}</span>
-                        <span className="text-muted-foreground"> × {quantity}</span>
+                    return (
+                      <div key={ticketId} className="flex justify-between items-center py-2 border-b border-border/50">
+                        <div>
+                          <span className="font-medium">{ticket.name}</span>
+                          <span className="text-muted-foreground"> × {quantity}</span>
+                        </div>
+                        <div className="text-right">
+                          <div className="font-medium">{formatPrice(ticket.final_price * quantity)}</div>
+                        </div>
                       </div>
-                      <div className="text-right">
-                        <div className="font-medium">${(ticket.finalPrice * quantity).toLocaleString()}</div>
-                      </div>
-                    </div>
-                  )
-                })}
+                    )
+                  })}
+                </div>
 
+                {/* Totales */}
                 <div className="pt-4 space-y-2">
                   <div className="flex justify-between text-lg">
                     <span>Total neto:</span>
-                    <span className="font-medium">${getTotalBasePrice().toLocaleString()}</span>
+                    <span className="font-medium">{formatPrice(getTotalBasePrice())}</span>
                   </div>
                   <div className="flex justify-between text-lg">
                     <span>Cargo por servicio:</span>
-                    <span className="font-medium">${(getTotalPrice() - getTotalBasePrice()).toLocaleString()}</span>
+                    <span className="font-medium">{formatPrice(getTotalPrice() - getTotalBasePrice())}</span>
                   </div>
                   <div className="flex justify-between text-xl font-bold text-primary border-t border-border pt-2">
                     <span>Total final:</span>
-                    <span>${getTotalPrice().toLocaleString()}</span>
+                    <span>{formatPrice(getTotalPrice())}</span>
+                  </div>
+                </div>
+
+                {/* Email para recibir todos los tickets */}
+                <div className="border-t border-border pt-6 space-y-4">
+                  <h3 className="font-semibold text-lg">Email de Contacto</h3>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Email *</label>
+                    <input
+                      type="email"
+                      value={buyerEmail}
+                      onChange={(e) => setBuyerEmail(e.target.value)}
+                      placeholder="juan.perez@email.com"
+                      className="w-full px-3 py-2 border border-border rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-primary"
+                      required
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Recibirás todos los QR codes en este email ({getTotalItems()} {getTotalItems() === 1 ? 'entrada' : 'entradas'})
+                    </p>
                   </div>
                 </div>
               </CardContent>
               <CardFooter>
-                <Button size="lg" className="w-full bg-primary hover:bg-primary/90 text-lg py-6">
-                  Ir a pagar con Mercado Pago
+                <Button 
+                  size="lg" 
+                  className="w-full bg-primary hover:bg-primary/90 text-lg py-6"
+                  onClick={initializeAttendeeForm}
+                  disabled={!buyerEmail.trim()}
+                >
+                  Continuar
+                </Button>
+              </CardFooter>
+            </Card>
+          )}
+
+          {/* Formulario de asistentes */}
+          {showAttendeeForm && (
+            <Card className="max-w-3xl mx-auto border-primary/50 bg-card/50 backdrop-blur-sm">
+              <CardHeader>
+                <CardTitle>Datos de los Asistentes</CardTitle>
+                <CardDescription>
+                  Completa la información de cada persona que asistirá al evento. 
+                  Se generará un QR individual para cada uno.
+                  <div className="mt-2 text-sm font-medium text-primary">
+                    ¿Quieres agregar más tickets? Haz clic en "Volver al Carrito" y agrega más entradas.
+                  </div>
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6 max-h-[60vh] overflow-y-auto">
+                {attendees.map((attendee, index) => (
+                  <div key={index} className="border border-border rounded-lg p-4 space-y-4 bg-background">
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="font-semibold text-base">
+                        Asistente {index + 1} - <Badge variant="outline">{attendee.ticketTypeName}</Badge>
+                      </h4>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Nombre *</label>
+                        <input
+                          type="text"
+                          value={attendee.firstName}
+                          onChange={(e) => updateAttendee(index, 'firstName', e.target.value)}
+                          placeholder="Juan"
+                          className="w-full px-3 py-2 border border-border rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-primary"
+                          required
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Apellido *</label>
+                        <input
+                          type="text"
+                          value={attendee.lastName}
+                          onChange={(e) => updateAttendee(index, 'lastName', e.target.value)}
+                          placeholder="Pérez"
+                          className="w-full px-3 py-2 border border-border rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-primary"
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">DNI *</label>
+                      <input
+                        type="text"
+                        value={attendee.dni}
+                        onChange={(e) => updateAttendee(index, 'dni', e.target.value.replace(/\D/g, ''))}
+                        placeholder="12345678"
+                        maxLength={8}
+                        className="w-full px-3 py-2 border border-border rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-primary"
+                        required
+                      />
+                      <p className="text-xs text-muted-foreground">Solo números, sin puntos ni espacios</p>
+                    </div>
+                  </div>
+                ))}
+
+                <div className="bg-primary/10 border border-primary/20 rounded-lg p-4">
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <p className="font-semibold">Total a pagar</p>
+                      <p className="text-sm text-muted-foreground">
+                        Todos los QR se enviarán a: <span className="font-medium">{buyerEmail}</span>
+                      </p>
+                    </div>
+                    <div className="text-2xl font-bold text-primary">
+                      {formatPrice(getTotalPrice())}
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+              <CardFooter className="flex gap-3">
+                <Button 
+                  variant="outline"
+                  size="lg" 
+                  className="flex-1"
+                  onClick={() => setShowAttendeeForm(false)}
+                >
+                  Volver al Carrito
+                </Button>
+                <Button 
+                  size="lg" 
+                  className="flex-1 bg-primary hover:bg-primary/90 text-lg py-6"
+                  onClick={handlePurchase}
+                  disabled={processing}
+                >
+                  {processing ? (
+                    <>
+                      <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                      Procesando...
+                    </>
+                  ) : (
+                    'Confirmar Compra'
+                  )}
                 </Button>
               </CardFooter>
             </Card>

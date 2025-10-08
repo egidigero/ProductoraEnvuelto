@@ -81,6 +81,7 @@ interface Experience {
   eventDate: string
   location: string
   createdAt: string
+  features?: string[]
 }
 
 export default function Dashboard() {
@@ -103,16 +104,16 @@ export default function Dashboard() {
   const [experienceForm, setExperienceForm] = useState({
     name: "",
     description: "",
-    price: "",
+    basePrice: "",
+    serviceFeePercent: "5",
     maxCapacity: "",
-    eventDate: "",
-    location: "",
-    status: "active" as const,
+    status: "active" as "active" | "inactive" | "sold_out",
+    features: [] as string[],
   })
+  const [newFeature, setNewFeature] = useState("")
 
   useEffect(() => {
     fetchDashboardData()
-    fetchExperiences()
   }, [])
 
   const fetchDashboardData = async () => {
@@ -121,7 +122,8 @@ export default function Dashboard() {
       setError(null)
       setRefreshing(true)
 
-      const response = await fetch("/api/dashboard/stats")
+      // Usar la nueva API que incluye ticket types
+      const response = await fetch("/api/dashboard/stats-v2")
       const data = await response.json()
 
       console.log("[v0] Dashboard response:", data)
@@ -129,6 +131,23 @@ export default function Dashboard() {
       if (data.success) {
         setPurchases(data.purchases || [])
         setStats(data.stats || stats)
+        // Mapear ticket_types a experiences para compatibilidad
+        if (data.ticketTypes) {
+          const mappedExperiences = data.ticketTypes.map((tt: any) => ({
+            id: tt.id,
+            name: tt.name,
+            description: tt.description || '',
+            price: tt.price,
+            maxCapacity: tt.capacity,
+            currentSold: tt.sold_count,
+            status: tt.status,
+            eventDate: new Date().toISOString(), // Hardcoded para evento único
+            location: 'El Club De Los Pescadores', // Hardcoded
+            createdAt: new Date().toISOString(),
+            features: Array.isArray(tt.features) ? tt.features : [],
+          }))
+          setExperiences(mappedExperiences)
+        }
       } else {
         setError(data.error || "Error desconocido")
       }
@@ -138,20 +157,6 @@ export default function Dashboard() {
     } finally {
       setLoading(false)
       setRefreshing(false)
-    }
-  }
-
-  const fetchExperiences = async () => {
-    try {
-      console.log("[v0] Fetching experiences...")
-      const response = await fetch("/api/experiences")
-      const data = await response.json()
-
-      if (data.success) {
-        setExperiences(data.experiences || [])
-      }
-    } catch (error) {
-      console.error("[v0] Error fetching experiences:", error)
     }
   }
 
@@ -185,34 +190,45 @@ export default function Dashboard() {
   const handleExperienceSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     try {
-      const method = editingExperience ? "PUT" : "POST"
-      const url = editingExperience ? `/api/experiences/${editingExperience.id}` : "/api/experiences"
+      const method = editingExperience ? "PATCH" : "POST"
+      const url = editingExperience ? `/api/ticket-types/${editingExperience.id}` : "/api/ticket-types"
+
+      const basePrice = Number.parseFloat(experienceForm.basePrice)
+      const serviceFeePercent = Number.parseFloat(experienceForm.serviceFeePercent)
+      const serviceFee = Math.round((basePrice * serviceFeePercent) / 100)
 
       const response = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          ...experienceForm,
-          price: Number.parseFloat(experienceForm.price),
-          maxCapacity: Number.parseInt(experienceForm.maxCapacity),
+          name: experienceForm.name,
+          description: experienceForm.description,
+          base_price: basePrice,
+          service_fee: serviceFee,
+          capacity: Number.parseInt(experienceForm.maxCapacity),
+          status: experienceForm.status,
+          is_popular: false,
+          display_order: 0,
+          features: experienceForm.features,
         }),
       })
 
       const data = await response.json()
 
       if (data.success) {
-        await fetchExperiences()
+        await fetchDashboardData() // Recargar todo el dashboard
         setShowExperienceDialog(false)
         setEditingExperience(null)
         setExperienceForm({
           name: "",
           description: "",
-          price: "",
+          basePrice: "",
+          serviceFeePercent: "5",
           maxCapacity: "",
-          eventDate: "",
-          location: "",
           status: "active",
+          features: [],
         })
+        setNewFeature("")
       } else {
         alert("Error: " + data.error)
       }
@@ -222,17 +238,68 @@ export default function Dashboard() {
     }
   }
 
-  const handleEditExperience = (experience: Experience) => {
+  const handleEditExperience = async (experience: Experience) => {
     setEditingExperience(experience)
-    setExperienceForm({
-      name: experience.name,
-      description: experience.description,
-      price: experience.price.toString(),
-      maxCapacity: experience.maxCapacity.toString(),
-      eventDate: experience.eventDate.split("T")[0],
-      location: experience.location,
-      status: experience.status,
-    })
+    
+    try {
+      // Obtener los datos completos del ticket type desde la API
+      const response = await fetch(`/api/ticket-types/${experience.id}`)
+      const data = await response.json()
+      
+      if (data.success && data.ticket_type) {
+        const ticketType = data.ticket_type
+        
+        console.log('[Dashboard] Ticket type loaded:', ticketType)
+        console.log('[Dashboard] Features:', ticketType.features)
+        
+        // Calcular el porcentaje de servicio desde base_price y service_fee
+        const serviceFeePercent = ticketType.base_price > 0 
+          ? Math.round((ticketType.service_fee / ticketType.base_price) * 100)
+          : 5
+        
+        setExperienceForm({
+          name: ticketType.name,
+          description: ticketType.description || '',
+          basePrice: ticketType.base_price.toString(),
+          serviceFeePercent: serviceFeePercent.toString(),
+          maxCapacity: ticketType.capacity.toString(),
+          status: ticketType.status,
+          features: Array.isArray(ticketType.features) ? ticketType.features : [],
+        })
+      } else {
+        // Fallback si falla la API - usar datos del objeto experience
+        const serviceFeePercent = experience.price > 0 
+          ? Math.round(((experience.price - (experience.price / 1.05)) / (experience.price / 1.05)) * 100)
+          : 5
+        
+        setExperienceForm({
+          name: experience.name,
+          description: experience.description,
+          basePrice: Math.round(experience.price / 1.05).toString(),
+          serviceFeePercent: serviceFeePercent.toString(),
+          maxCapacity: experience.maxCapacity.toString(),
+          status: experience.status,
+          features: [],
+        })
+      }
+    } catch (error) {
+      console.error('Error loading ticket type details:', error)
+      // Fallback en caso de error
+      const serviceFeePercent = experience.price > 0 
+        ? Math.round(((experience.price - (experience.price / 1.05)) / (experience.price / 1.05)) * 100)
+        : 5
+      
+      setExperienceForm({
+        name: experience.name,
+        description: experience.description,
+        basePrice: Math.round(experience.price / 1.05).toString(),
+        serviceFeePercent: serviceFeePercent.toString(),
+        maxCapacity: experience.maxCapacity.toString(),
+        status: experience.status,
+        features: [],
+      })
+    }
+    
     setShowExperienceDialog(true)
   }
 
@@ -240,14 +307,14 @@ export default function Dashboard() {
     if (!confirm("¿Estás seguro de que quieres eliminar esta experiencia?")) return
 
     try {
-      const response = await fetch(`/api/experiences/${experienceId}`, {
+      const response = await fetch(`/api/ticket-types/${experienceId}`, {
         method: "DELETE",
       })
 
       const data = await response.json()
 
       if (data.success) {
-        await fetchExperiences()
+        await fetchDashboardData() // Recargar todo el dashboard
       } else {
         alert("Error: " + data.error)
       }
@@ -509,19 +576,20 @@ export default function Dashboard() {
                       setExperienceForm({
                         name: "",
                         description: "",
-                        price: "",
+                        basePrice: "",
+                        serviceFeePercent: "5",
                         maxCapacity: "",
-                        eventDate: "",
-                        location: "",
                         status: "active",
+                        features: [],
                       })
+                      setNewFeature("")
                     }}
                   >
                     <Plus className="h-4 w-4 mr-2" />
                     Nueva Experiencia
                   </Button>
                 </DialogTrigger>
-                <DialogContent className="sm:max-w-[600px]">
+                <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
                   <DialogHeader>
                     <DialogTitle>{editingExperience ? "Editar Experiencia" : "Nueva Experiencia"}</DialogTitle>
                     <DialogDescription>
@@ -531,30 +599,19 @@ export default function Dashboard() {
                     </DialogDescription>
                   </DialogHeader>
                   <form onSubmit={handleExperienceSubmit} className="space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="name">Nombre</Label>
-                        <Input
-                          id="name"
-                          value={experienceForm.name}
-                          onChange={(e) => setExperienceForm({ ...experienceForm, name: e.target.value })}
-                          placeholder="Ej: VIP Experience"
-                          required
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="price">Precio ($)</Label>
-                        <Input
-                          id="price"
-                          type="number"
-                          value={experienceForm.price}
-                          onChange={(e) => setExperienceForm({ ...experienceForm, price: e.target.value })}
-                          placeholder="15000"
-                          required
-                        />
-                      </div>
+                    {/* Nombre */}
+                    <div className="space-y-2">
+                      <Label htmlFor="name">Nombre de la Experiencia</Label>
+                      <Input
+                        id="name"
+                        value={experienceForm.name}
+                        onChange={(e) => setExperienceForm({ ...experienceForm, name: e.target.value })}
+                        placeholder="Ej: VIP Experience"
+                        required
+                      />
                     </div>
 
+                    {/* Descripción */}
                     <div className="space-y-2">
                       <Label htmlFor="description">Descripción</Label>
                       <Textarea
@@ -567,6 +624,55 @@ export default function Dashboard() {
                       />
                     </div>
 
+                    {/* Precios */}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="basePrice">Precio Base ($)</Label>
+                        <Input
+                          id="basePrice"
+                          type="number"
+                          value={experienceForm.basePrice}
+                          onChange={(e) => setExperienceForm({ ...experienceForm, basePrice: e.target.value })}
+                          placeholder="15000"
+                          required
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="serviceFeePercent">Cargo Servicio (%)</Label>
+                        <Input
+                          id="serviceFeePercent"
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          max="100"
+                          value={experienceForm.serviceFeePercent}
+                          onChange={(e) => setExperienceForm({ ...experienceForm, serviceFeePercent: e.target.value })}
+                          placeholder="5"
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    {/* Precio Final Calculado */}
+                    {experienceForm.basePrice && experienceForm.serviceFeePercent && (
+                      <div className="bg-muted p-3 rounded-lg">
+                        <div className="flex justify-between items-center text-sm">
+                          <span className="text-muted-foreground">Precio Final:</span>
+                          <span className="font-bold text-lg">
+                            ${(
+                              Number.parseFloat(experienceForm.basePrice) +
+                              Math.round((Number.parseFloat(experienceForm.basePrice) * Number.parseFloat(experienceForm.serviceFeePercent)) / 100)
+                            ).toLocaleString()}
+                          </span>
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-1">
+                          Base: ${Number.parseFloat(experienceForm.basePrice || "0").toLocaleString()} + 
+                          Servicio: ${Math.round((Number.parseFloat(experienceForm.basePrice || "0") * Number.parseFloat(experienceForm.serviceFeePercent || "0")) / 100).toLocaleString()}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Capacidad y Estado */}
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label htmlFor="maxCapacity">Capacidad Máxima</Label>
@@ -596,26 +702,65 @@ export default function Dashboard() {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4">
+                    {/* Beneficios/Features */}
+                    <div className="space-y-2">
+                      <Label>Beneficios Incluidos</Label>
                       <div className="space-y-2">
-                        <Label htmlFor="eventDate">Fecha del Evento</Label>
-                        <Input
-                          id="eventDate"
-                          type="date"
-                          value={experienceForm.eventDate}
-                          onChange={(e) => setExperienceForm({ ...experienceForm, eventDate: e.target.value })}
-                          required
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="location">Ubicación</Label>
-                        <Input
-                          id="location"
-                          value={experienceForm.location}
-                          onChange={(e) => setExperienceForm({ ...experienceForm, location: e.target.value })}
-                          placeholder="El Club De Los Pescadores"
-                          required
-                        />
+                        {experienceForm.features.map((feature, index) => (
+                          <div key={index} className="flex items-center gap-2 bg-muted p-2 rounded">
+                            <CheckCircle className="h-4 w-4 text-primary" />
+                            <span className="flex-1 text-sm">{feature}</span>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                const newFeatures = experienceForm.features.filter((_, i) => i !== index)
+                                setExperienceForm({ ...experienceForm, features: newFeatures })
+                              }}
+                            >
+                              <XCircle className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ))}
+                        
+                        <div className="flex gap-2">
+                          <Input
+                            value={newFeature}
+                            onChange={(e) => setNewFeature(e.target.value)}
+                            placeholder="Ej: Acceso a todas las áreas"
+                            onKeyPress={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault()
+                                if (newFeature.trim()) {
+                                  setExperienceForm({
+                                    ...experienceForm,
+                                    features: [...experienceForm.features, newFeature.trim()]
+                                  })
+                                  setNewFeature("")
+                                }
+                              }
+                            }}
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => {
+                              if (newFeature.trim()) {
+                                setExperienceForm({
+                                  ...experienceForm,
+                                  features: [...experienceForm.features, newFeature.trim()]
+                                })
+                                setNewFeature("")
+                              }
+                            }}
+                          >
+                            <Plus className="h-4 w-4" />
+                          </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Presiona Enter o click en + para agregar un beneficio
+                        </p>
                       </div>
                     </div>
 
@@ -706,6 +851,19 @@ export default function Dashboard() {
                             </p>
                           </div>
                         </div>
+                        {experience.features && experience.features.length > 0 && (
+                          <div className="mt-4 pt-4 border-t">
+                            <p className="text-sm font-medium mb-2">Beneficios incluidos:</p>
+                            <ul className="text-sm text-muted-foreground space-y-1">
+                              {experience.features.map((feature, idx) => (
+                                <li key={idx} className="flex items-start gap-2">
+                                  <span className="text-green-500 mt-0.5">✓</span>
+                                  <span>{feature}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
                         <div className="mt-4 pt-4 border-t">
                           <div className="flex justify-between text-sm text-muted-foreground">
                             <span>📅 {new Date(experience.eventDate).toLocaleDateString("es-AR")}</span>
