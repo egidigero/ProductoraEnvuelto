@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { CheckCircle, XCircle, AlertCircle, Camera, Scan, LogOut, Loader2 } from "lucide-react"
+import jsQR from "jsqr"
 
 interface ValidationResult {
   success: boolean
@@ -117,25 +118,45 @@ export default function ScanPage() {
 
   const scanForQRCode = () => {
     if (!isScanning || !videoRef.current || !canvasRef.current) return
+    
     const video = videoRef.current
     const canvas = canvasRef.current
     const context = canvas.getContext("2d")
+    
     if (context && video.readyState === video.HAVE_ENOUGH_DATA) {
       canvas.width = video.videoWidth
       canvas.height = video.videoHeight
       context.drawImage(video, 0, 0, canvas.width, canvas.height)
-      setTimeout(() => {
-        const urlParams = new URLSearchParams(window.location.search)
-        const tokenFromUrl = urlParams.get("tkn")
-        if (tokenFromUrl) {
-          validateTicket(tokenFromUrl)
+      
+      const imageData = context.getImageData(0, 0, canvas.width, canvas.height)
+      const code = jsQR(imageData.data, imageData.width, imageData.height, {
+        inversionAttempts: "dontInvert",
+      })
+      
+      if (code) {
+        console.log("QR Code detected:", code.data)
+        
+        // Extract token from URL
+        try {
+          const url = new URL(code.data)
+          const token = url.searchParams.get("tkn")
+          
+          if (token) {
+            stopScanning()
+            validateTicket(token)
+          } else {
+            console.warn("No token found in QR code URL:", code.data)
+          }
+        } catch (error) {
+          // If it's not a URL, try to use it directly as a token
           stopScanning()
-        } else {
-          if (isScanning) { requestAnimationFrame(scanForQRCode) }
+          validateTicket(code.data)
         }
-      }, 100)
-    } else {
-      if (isScanning) { requestAnimationFrame(scanForQRCode) }
+      }
+    }
+    
+    if (isScanning) {
+      requestAnimationFrame(scanForQRCode)
     }
   }
 

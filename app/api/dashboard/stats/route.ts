@@ -1,97 +1,106 @@
 import { type NextRequest, NextResponse } from "next/server"
+import { createClient } from "@supabase/supabase-js"
+
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  }
+)
 
 export async function GET(request: NextRequest) {
   try {
-    console.log("[v0] Dashboard stats API called")
+    console.log("[v0] Dashboard stats API called - fetching from database")
 
-    // TODO: Reemplazar con consultas reales a tu base de datos
-    // Por ahora uso datos mock pero con estructura real
+    // Get event ID from env
+    const eventId = process.env.NEXT_PUBLIC_EVENT_ID!
 
-    // Simulación de consulta a base de datos
-    const mockPurchases = [
-      {
-        id: "purchase_1",
-        buyerName: "Juan Pérez",
-        buyerEmail: "juan@email.com",
-        buyerPhone: "+54911234567",
-        buyerDni: "12345678",
-        totalAmount: 15000,
-        status: "completed",
-        createdAt: new Date().toISOString(),
-        mercadoPagoId: "mp_123456",
-        attendees: [
-          {
-            id: "att_1",
-            name: "Juan",
-            lastName: "Pérez",
-            dni: "12345678",
-            email: "juan@email.com",
-            ticketType: "General",
-            qrToken: "qr_token_123",
-            scannedAt: null,
-            isRevoked: false,
-          },
-          {
-            id: "att_2",
-            name: "María",
-            lastName: "García",
-            dni: "87654321",
-            email: "maria@email.com",
-            ticketType: "VIP",
-            qrToken: "qr_token_456",
-            scannedAt: new Date().toISOString(),
-            isRevoked: false,
-          },
-        ],
-      },
-      {
-        id: "purchase_2",
-        buyerName: "Ana López",
-        buyerEmail: "ana@email.com",
-        buyerPhone: "+54911111111",
-        buyerDni: "11111111",
-        totalAmount: 8000,
-        status: "completed",
-        createdAt: new Date(Date.now() - 86400000).toISOString(), // Yesterday
-        mercadoPagoId: "mp_789012",
-        attendees: [
-          {
-            id: "att_3",
-            name: "Ana",
-            lastName: "López",
-            dni: "11111111",
-            email: "ana@email.com",
-            ticketType: "Early Bird",
-            qrToken: "qr_token_789",
-            scannedAt: null,
-            isRevoked: false,
-          },
-        ],
-      },
-    ]
+    // Fetch all orders for this event
+    const { data: orders, error: ordersError } = await supabaseAdmin
+      .from('orders')
+      .select('*')
+      .eq('event_id', eventId)
+      .order('created_at', { ascending: false })
 
-    const stats = {
-      totalSales: mockPurchases.length,
-      totalTickets: mockPurchases.reduce((acc, p) => acc + p.attendees.length, 0),
-      scannedTickets: mockPurchases.reduce(
-        (acc, p) => acc + p.attendees.filter((a) => a.scannedAt && !a.isRevoked).length,
-        0,
-      ),
-      revenue: mockPurchases.reduce((acc, p) => acc + p.totalAmount, 0),
-      pendingTickets: mockPurchases.reduce(
-        (acc, p) => acc + p.attendees.filter((a) => !a.scannedAt && !a.isRevoked).length,
-        0,
-      ),
-      revokedTickets: mockPurchases.reduce((acc, p) => acc + p.attendees.filter((a) => a.isRevoked).length, 0),
+    if (ordersError) {
+      console.error("[v0] Error fetching orders:", ordersError)
+      throw ordersError
     }
+
+    // Fetch all tickets for this event with their relationships
+    const { data: tickets, error: ticketsError } = await supabaseAdmin
+      .from('tickets')
+      .select(`
+        *,
+        orders!inner(id, buyer_name, buyer_email, buyer_phone, buyer_dni, total_amount, status, created_at, mercadopago_payment_id)
+      `)
+      .eq('orders.event_id', eventId)
+
+    if (ticketsError) {
+      console.error("[v0] Error fetching tickets:", ticketsError)
+      throw ticketsError
+    }
+
+    console.log(`[v0] Found ${orders?.length || 0} orders and ${tickets?.length || 0} tickets`)
+
+    // Calculate statistics based on REAL data
+    const stats = {
+      totalSales: orders?.length || 0,
+      totalTickets: tickets?.length || 0,
+      scannedTickets: tickets?.filter(t => t.status === 'used').length || 0,
+      revenue: orders?.reduce((acc, o) => acc + (Number(o.total_amount) || 0), 0) || 0,
+      pendingTickets: tickets?.filter(t => t.status === 'valid').length || 0,
+      revokedTickets: tickets?.filter(t => t.status === 'revoked').length || 0,
+    }
+
+    // Group tickets by order for the purchases structure
+    const purchasesMap = new Map()
+
+    tickets?.forEach(ticket => {
+      const order = ticket.orders as any
+      if (!order) return
+
+      if (!purchasesMap.has(order.id)) {
+        purchasesMap.set(order.id, {
+          id: order.id,
+          buyerName: order.buyer_name,
+          buyerEmail: order.buyer_email,
+          buyerPhone: order.buyer_phone,
+          buyerDni: order.buyer_dni,
+          totalAmount: Number(order.total_amount) || 0,
+          status: order.status,
+          createdAt: order.created_at,
+          mercadoPagoId: order.mercadopago_payment_id,
+          attendees: [],
+        })
+      }
+
+      purchasesMap.get(order.id).attendees.push({
+        id: ticket.id,
+        name: ticket.attendee_name,
+        lastName: ticket.attendee_last_name,
+        dni: ticket.attendee_dni,
+        email: ticket.attendee_email,
+        ticketType: ticket.ticket_type_name,
+        qrToken: ticket.token, // This is the public token
+        scannedAt: ticket.used_at,
+        isRevoked: ticket.status === 'revoked',
+      })
+    })
+
+    const purchases = Array.from(purchasesMap.values())
 
     console.log("[v0] Dashboard stats calculated:", stats)
 
     return NextResponse.json({
       success: true,
-      purchases: mockPurchases,
+      purchases,
       stats,
-      message: "Datos cargados correctamente",
+      message: "Datos cargados correctamente desde la base de datos",
     })
   } catch (error) {
     console.error("[v0] Error fetching dashboard stats:", error)
