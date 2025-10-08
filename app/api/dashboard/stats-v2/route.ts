@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
 
     // 4. Calcular estadísticas
     const totalTickets = tickets?.length || 0;
-    const scannedTickets = tickets?.filter(t => t.scanned_at !== null).length || 0;
+    const scannedTickets = tickets?.filter(t => t.status === 'used').length || 0;
     const revokedTickets = tickets?.filter(t => t.status === 'revoked').length || 0;
     const validTickets = tickets?.filter(t => t.status === 'valid').length || 0;
 
@@ -60,7 +60,7 @@ export async function GET(request: NextRequest) {
     // 5. Calcular datos por tipo de ticket
     const ticketTypeStats = ticketTypes?.map(tt => {
       const ttTickets = tickets?.filter(t => t.ticket_type_id === tt.id) || [];
-      const ttScanned = ttTickets.filter(t => t.scanned_at !== null).length;
+      const ttScanned = ttTickets.filter(t => t.status === 'used').length;
       
       return {
         id: tt.id,
@@ -88,9 +88,9 @@ export async function GET(request: NextRequest) {
         *,
         tickets (
           id,
-          qr_token,
+          token,
           status,
-          scanned_at,
+          used_at,
           attendee_name,
           attendee_email,
           attendee_dni,
@@ -125,8 +125,8 @@ export async function GET(request: NextRequest) {
         dni: ticket.attendee_dni || '',
         email: ticket.attendee_email || '',
         ticketType: ticket.ticket_types?.name || 'General',
-        qrToken: ticket.qr_token || '',
-        scannedAt: ticket.scanned_at,
+        qrToken: ticket.token || '',
+        scannedAt: ticket.used_at,
         isRevoked: ticket.status === 'revoked',
       })),
     }));
