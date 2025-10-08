@@ -95,11 +95,18 @@ export default function ScanPage() {
       setIsScanning(true)
       setCameraError(null)
       setValidationResult(null)
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          facingMode: "environment",
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        } 
+      })
       if (videoRef.current) {
         videoRef.current.srcObject = stream
-        videoRef.current.play()
-        scanForQRCode()
+        await videoRef.current.play()
+        // Wait for video to be ready before scanning
+        setTimeout(() => scanForQRCode(), 500)
       }
     } catch (error) {
       console.error("Error accessing camera:", error)

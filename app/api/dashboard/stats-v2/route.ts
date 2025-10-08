@@ -3,10 +3,23 @@ import { supabaseAdmin } from '@/lib/supabase-client';
 
 export async function GET(request: NextRequest) {
   try {
-    // 1. Obtener estadísticas de ticket types
+    const eventId = process.env.NEXT_PUBLIC_EVENT_ID;
+    
+    if (!eventId) {
+      console.error('NEXT_PUBLIC_EVENT_ID not configured');
+      return NextResponse.json(
+        { success: false, error: 'Event ID not configured' },
+        { status: 500 }
+      );
+    }
+
+    console.log('[stats-v2] Fetching data for event:', eventId);
+
+    // 1. Obtener estadísticas de ticket types para este evento
     const { data: ticketTypes, error: ttError } = await supabaseAdmin
       .from('ticket_types')
       .select('*')
+      .eq('event_id', eventId)
       .order('display_order', { ascending: true });
 
     if (ttError) {
@@ -17,10 +30,11 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // 2. Obtener estadísticas de orders
+    // 2. Obtener estadísticas de orders para este evento
     const { data: orders, error: ordersError } = await supabaseAdmin
       .from('orders')
       .select('*')
+      .eq('event_id', eventId)
       .order('created_at', { ascending: false });
 
     if (ordersError) {
@@ -31,10 +45,14 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // 3. Obtener estadísticas de tickets
+    // 3. Obtener estadísticas de tickets para este evento (via order)
     const { data: tickets, error: ticketsError } = await supabaseAdmin
       .from('tickets')
-      .select('*');
+      .select(`
+        *,
+        orders!inner(event_id)
+      `)
+      .eq('orders.event_id', eventId);
 
     if (ticketsError) {
       console.error('Error fetching tickets:', ticketsError);
@@ -43,6 +61,8 @@ export async function GET(request: NextRequest) {
         { status: 500 }
       );
     }
+
+    console.log(`[stats-v2] Found ${tickets?.length || 0} tickets for event ${eventId}`);
 
     // 4. Calcular estadísticas
     const totalTickets = tickets?.length || 0;
