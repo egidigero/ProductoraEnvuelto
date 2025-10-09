@@ -33,8 +33,13 @@ export default function ScanPage() {
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null)
   const [manualToken, setManualToken] = useState("")
   const [cameraError, setCameraError] = useState<string | null>(null)
+  const [scanningStatus, setScanningStatus] = useState<string>("Esperando código QR...")
+  const [debugInfo, setDebugInfo] = useState<string>("")
+  const [captureMode, setCaptureMode] = useState<boolean>(false)
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const scanningRef = useRef<boolean>(false)
+  const lastDebugUpdateRef = useRef<number>(0)
 
   // Verify operator session on mount
   useEffect(() => {
@@ -90,12 +95,54 @@ export default function ScanPage() {
     }
   }
 
+  const captureAndScan = () => {
+    if (!videoRef.current || !canvasRef.current) return
+    
+    const video = videoRef.current
+    const canvas = canvasRef.current
+    const context = canvas.getContext("2d")
+    
+    if (!context) return
+    
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    context.drawImage(video, 0, 0, canvas.width, canvas.height)
+    
+    const imageData = context.getImageData(0, 0, canvas.width, canvas.height)
+    const code = jsQR(imageData.data, imageData.width, imageData.height, {
+      inversionAttempts: "attemptBoth",
+    })
+    
+    if (code) {
+      console.log("[Scanner] ✅ QR Code detected in capture:", code.data)
+      setDebugInfo(`Captura exitosa: ${code.data.substring(0, 30)}...`)
+      
+      try {
+        const url = new URL(code.data)
+        const token = url.searchParams.get("tkn")
+        if (token) {
+          stopScanning()
+          validateTicket(token)
+        } else {
+          setDebugInfo("No se encontró token en la captura")
+        }
+      } catch (error) {
+        stopScanning()
+        validateTicket(code.data)
+      }
+    } else {
+      setDebugInfo("No se detectó QR en la captura. Intenta de nuevo.")
+    }
+  }
+
   const startCameraScanning = async () => {
     try {
       console.log("[Scanner] Starting camera...")
       setIsScanning(true)
+      scanningRef.current = true
       setCameraError(null)
       setValidationResult(null)
+      setScanningStatus("Iniciando cámara...")
       
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { 
@@ -106,6 +153,7 @@ export default function ScanPage() {
       })
       
       console.log("[Scanner] Camera stream obtained")
+      setScanningStatus("Cámara activa - Apunta al código QR")
       
       if (videoRef.current) {
         videoRef.current.srcObject = stream
@@ -115,6 +163,7 @@ export default function ScanPage() {
         // Wait for video to be ready before scanning
         setTimeout(() => {
           console.log("[Scanner] Initiating QR scan loop")
+          setScanningStatus("🔍 Buscando código QR...")
           scanForQRCode()
         }, 1000)
       }
@@ -135,6 +184,8 @@ export default function ScanPage() {
 
   const stopScanning = () => {
     setIsScanning(false)
+    scanningRef.current = false
+    setScanningStatus("Escaneo detenido")
     if (videoRef.current?.srcObject) {
       const stream = videoRef.current.srcObject as MediaStream
       stream.getTracks().forEach((track) => track.stop())
@@ -142,7 +193,7 @@ export default function ScanPage() {
   }
 
   const scanForQRCode = () => {
-    if (!isScanning || !videoRef.current || !canvasRef.current) {
+    if (!scanningRef.current || !videoRef.current || !canvasRef.current) {
       console.log("[Scanner] Scan aborted - missing refs or not scanning")
       return
     }
@@ -170,6 +221,8 @@ export default function ScanPage() {
       
       if (code) {
         console.log("[Scanner] ✅ QR Code detected:", code.data)
+        setScanningStatus("✅ ¡Código detectado! Validando...")
+        setDebugInfo(`QR: ${code.data.substring(0, 50)}...`)
         
         // Extract token from URL
         try {
@@ -178,26 +231,38 @@ export default function ScanPage() {
           
           if (token) {
             console.log("[Scanner] Token extracted:", token)
+            setDebugInfo(`Token: ${token}`)
             stopScanning()
             validateTicket(token)
             return // Don't continue scanning
           } else {
             console.warn("[Scanner] No 'tkn' parameter found in QR URL:", code.data)
+            setScanningStatus("⚠️ Código inválido - sigue buscando...")
+            setDebugInfo("No se encontró token en URL")
           }
         } catch (error) {
           // If it's not a URL, try to use it directly as a token
           console.log("[Scanner] Not a URL, trying as direct token:", code.data)
+          setDebugInfo(`Token directo: ${code.data}`)
           stopScanning()
           validateTicket(code.data)
           return // Don't continue scanning
         }
+      } else {
+        // Update debug info every 30 frames to show it's working
+        const now = Date.now()
+        if (!lastDebugUpdateRef.current || now - lastDebugUpdateRef.current > 1000) {
+          setDebugInfo(`Video: ${canvas.width}x${canvas.height} - Buscando...`)
+          lastDebugUpdateRef.current = now
+        }
       }
     } else if (video.readyState < video.HAVE_ENOUGH_DATA) {
       console.log("[Scanner] Video not ready yet, waiting...")
+      setScanningStatus("⏳ Preparando video...")
     }
     
     // Continue scanning
-    if (isScanning) {
+    if (scanningRef.current) {
       requestAnimationFrame(scanForQRCode)
     }
   }
@@ -293,6 +358,12 @@ export default function ScanPage() {
                   <div className="absolute bottom-4 left-4 w-6 h-6 border-b-2 border-l-2 border-purple-400"></div>
                   <div className="absolute bottom-4 right-4 w-6 h-6 border-b-2 border-r-2 border-purple-400"></div>
                 </div>
+                {/* Status indicator */}
+                <div className="absolute top-2 left-2 right-2 text-center">
+                  <div className="bg-black/70 rounded-full px-4 py-2 inline-block">
+                    <p className="text-white text-sm font-medium">{scanningStatus}</p>
+                  </div>
+                </div>
                 <div className="absolute bottom-2 left-2 right-2 text-center">
                   <p className="text-white text-sm bg-black/50 rounded px-2 py-1">Apunta la cámara al código QR</p>
                 </div>
@@ -303,10 +374,21 @@ export default function ScanPage() {
                 <p className="text-red-400 text-sm">{cameraError}</p>
               </div>
             )}
+            {/* Debug info */}
+            {debugInfo && isScanning && (
+              <div className="bg-slate-700/50 border border-slate-600 rounded-lg p-2">
+                <p className="text-slate-300 text-xs font-mono break-all">{debugInfo}</p>
+              </div>
+            )}
             <div className="flex gap-2">
               <Button onClick={isScanning ? stopScanning : startCameraScanning} className={`flex-1 ${isScanning ? "bg-red-600 hover:bg-red-700" : "bg-purple-600 hover:bg-purple-700"}`}>
                 {isScanning ? (<><XCircle className="w-4 h-4 mr-2" />Detener</>) : (<><Camera className="w-4 h-4 mr-2" />Escanear</>)}
               </Button>
+              {isScanning && (
+                <Button onClick={captureAndScan} className="bg-green-600 hover:bg-green-700" title="Capturar y escanear">
+                  📸
+                </Button>
+              )}
             </div>
             <div className="text-center text-slate-400"><p className="text-sm">o</p></div>
             <div className="space-y-2">
