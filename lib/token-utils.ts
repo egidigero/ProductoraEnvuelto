@@ -83,7 +83,7 @@ export async function generateQRCodeSVG(data: string): Promise<string> {
  * Create ticket validation URL
  */
 export function createTicketURL(baseUrl: string, token: string): string {
-  return `${baseUrl}/t/scan?tkn=${token}`;
+  return `${baseUrl}/scan?tkn=${token}`;
 }
 
 /**

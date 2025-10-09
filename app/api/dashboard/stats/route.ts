@@ -16,14 +16,10 @@ export async function GET(request: NextRequest) {
   try {
     console.log("[v0] Dashboard stats API called - fetching from database")
 
-    // Get event ID from env
-    const eventId = process.env.NEXT_PUBLIC_EVENT_ID!
-
-    // Fetch all orders for this event
+    // Fetch all orders (sin filtrar por evento)
     const { data: orders, error: ordersError } = await supabaseAdmin
       .from('orders')
       .select('*')
-      .eq('event_id', eventId)
       .order('created_at', { ascending: false })
 
     if (ordersError) {
@@ -31,14 +27,13 @@ export async function GET(request: NextRequest) {
       throw ordersError
     }
 
-    // Fetch all tickets for this event with their relationships
+    // Fetch all tickets with their relationships
     const { data: tickets, error: ticketsError } = await supabaseAdmin
       .from('tickets')
       .select(`
         *,
         orders!inner(id, buyer_name, buyer_email, buyer_phone, buyer_dni, total_amount, status, created_at, mercadopago_payment_id)
       `)
-      .eq('orders.event_id', eventId)
 
     if (ticketsError) {
       console.error("[v0] Error fetching tickets:", ticketsError)

@@ -3,72 +3,68 @@ import { supabaseAdmin } from '@/lib/supabase-client';
 
 export async function GET(request: NextRequest) {
   try {
-    const eventId = process.env.NEXT_PUBLIC_EVENT_ID;
-    
-    if (!eventId) {
-      console.error('NEXT_PUBLIC_EVENT_ID not configured');
-      return NextResponse.json(
-        { success: false, error: 'Event ID not configured' },
-        { status: 500 }
-      );
-    }
+    console.log('[stats-v2] Fetching all orders and tickets');
 
-    console.log('[stats-v2] Fetching data for event:', eventId);
-
-    // 1. Obtener estadísticas de ticket types para este evento
-    const { data: ticketTypes, error: ttError } = await supabaseAdmin
-      .from('ticket_types')
-      .select('*')
-      .eq('event_id', eventId)
-      .order('display_order', { ascending: true });
-
-    if (ttError) {
-      console.error('Error fetching ticket types:', ttError);
-      return NextResponse.json(
-        { success: false, error: 'Failed to fetch ticket types' },
-        { status: 500 }
-      );
-    }
-
-    // 2. Obtener estadísticas de orders para este evento
+    // 1. Obtener todas las orders (sin filtrar por evento)
     const { data: orders, error: ordersError } = await supabaseAdmin
       .from('orders')
       .select('*')
-      .eq('event_id', eventId)
       .order('created_at', { ascending: false });
 
     if (ordersError) {
       console.error('Error fetching orders:', ordersError);
       return NextResponse.json(
-        { success: false, error: 'Failed to fetch orders' },
+        { success: false, error: 'Failed to fetch orders', details: ordersError },
         { status: 500 }
       );
     }
 
-    // 3. Obtener estadísticas de tickets para este evento (via order)
-    const { data: tickets, error: ticketsError } = await supabaseAdmin
-      .from('tickets')
-      .select(`
-        *,
-        orders!inner(event_id)
-      `)
-      .eq('orders.event_id', eventId);
+    console.log(`[stats-v2] Found ${orders?.length || 0} orders`);
 
-    if (ticketsError) {
-      console.error('Error fetching tickets:', ticketsError);
+    // 2. Obtener IDs de orders
+    const orderIds = orders?.map(o => o.id) || [];
+
+    // 3. Obtener todos los tickets de esas orders
+    let tickets: any[] = [];
+    if (orderIds.length > 0) {
+      const { data: ticketsData, error: ticketsError } = await supabaseAdmin
+        .from('tickets')
+        .select('*')
+        .in('order_id', orderIds);
+
+      if (ticketsError) {
+        console.error('Error fetching tickets:', ticketsError);
+        return NextResponse.json(
+          { success: false, error: 'Failed to fetch tickets', details: ticketsError },
+          { status: 500 }
+        );
+      }
+      tickets = ticketsData || [];
+    }
+
+    console.log(`[stats-v2] Found ${tickets.length} tickets`);
+
+    // 4. Obtener ticket types (todos, sin filtrar por evento)
+    const { data: ticketTypes, error: ttError } = await supabaseAdmin
+      .from('ticket_types')
+      .select('*')
+      .order('display_order', { ascending: true });
+
+    if (ttError) {
+      console.error('Error fetching ticket types:', ttError);
       return NextResponse.json(
-        { success: false, error: 'Failed to fetch tickets' },
+        { success: false, error: 'Failed to fetch ticket types', details: ttError },
         { status: 500 }
       );
     }
 
-    console.log(`[stats-v2] Found ${tickets?.length || 0} tickets for event ${eventId}`);
+    console.log(`[stats-v2] Found ${ticketTypes?.length || 0} ticket types`);
 
-    // 4. Calcular estadísticas
-    const totalTickets = tickets?.length || 0;
-    const scannedTickets = tickets?.filter(t => t.status === 'used').length || 0;
-    const revokedTickets = tickets?.filter(t => t.status === 'revoked').length || 0;
-    const validTickets = tickets?.filter(t => t.status === 'valid').length || 0;
+    // 5. Calcular estadísticas
+    const totalTickets = tickets.length;
+    const scannedTickets = tickets.filter(t => t.status === 'used').length;
+    const revokedTickets = tickets.filter(t => t.status === 'revoked').length;
+    const validTickets = tickets.filter(t => t.status === 'valid').length;
 
     // Revenue total de orders pagadas
     const paidOrders = orders?.filter(o => o.status === 'paid') || [];
@@ -77,9 +73,9 @@ export async function GET(request: NextRequest) {
     // Total de ventas (orders completadas)
     const totalSales = paidOrders.length;
 
-    // 5. Calcular datos por tipo de ticket
+    // 6. Calcular datos por tipo de ticket
     const ticketTypeStats = ticketTypes?.map(tt => {
-      const ttTickets = tickets?.filter(t => t.ticket_type_id === tt.id) || [];
+      const ttTickets = tickets.filter(t => t.ticket_type_id === tt.id);
       const ttScanned = ttTickets.filter(t => t.status === 'used').length;
       
       return {
@@ -101,55 +97,49 @@ export async function GET(request: NextRequest) {
       };
     }) || [];
 
-    // 6. Obtener compras recientes con detalles
-    const { data: recentOrders, error: recentError } = await supabaseAdmin
-      .from('orders')
-      .select(`
-        *,
-        tickets (
-          id,
-          token,
-          status,
-          used_at,
-          attendee_name,
-          attendee_email,
-          attendee_dni,
-          ticket_type_id,
-          ticket_types (
-            name
-          )
-        )
-      `)
-      .order('created_at', { ascending: false })
-      .limit(50);
+    // 7. Construir purchases agrupando tickets por order
+    const orderMap = new Map();
+    
+    // Primero agregar todas las orders
+    orders?.forEach(order => {
+      orderMap.set(order.id, {
+        id: order.id,
+        buyerName: order.buyer_name || 'N/A',
+        buyerEmail: order.buyer_email || 'N/A',
+        buyerPhone: order.buyer_phone || 'N/A',
+        buyerDni: order.buyer_dni || 'N/A',
+        totalAmount: order.total_amount || 0,
+        status: order.status || 'pending',
+        createdAt: order.created_at,
+        mercadoPagoId: order.mercadopago_payment_id || '',
+        attendees: [],
+      });
+    });
 
-    if (recentError) {
-      console.error('Error fetching recent orders:', recentError);
-    }
+    // Luego agregar los tickets a cada order
+    tickets.forEach(ticket => {
+      const order = orderMap.get(ticket.order_id);
+      if (order) {
+        // Buscar el nombre del ticket type
+        const ticketType = ticketTypes?.find(tt => tt.id === ticket.ticket_type_id);
+        
+        order.attendees.push({
+          id: ticket.id,
+          name: ticket.attendee_name || '',
+          lastName: '',
+          dni: ticket.attendee_dni || '',
+          email: ticket.attendee_email || '',
+          ticketType: ticketType?.name || 'General',
+          qrToken: ticket.token || '',
+          scannedAt: ticket.used_at,
+          isRevoked: ticket.status === 'revoked',
+        });
+      }
+    });
 
-    // Formatear purchases
-    const purchases = (recentOrders || []).map(order => ({
-      id: order.id,
-      buyerName: order.buyer_name || 'N/A',
-      buyerEmail: order.buyer_email || 'N/A',
-      buyerPhone: order.buyer_phone || 'N/A',
-      buyerDni: order.buyer_dni || 'N/A',
-      totalAmount: order.total_amount || 0,
-      status: order.status || 'pending',
-      createdAt: order.created_at,
-      mercadoPagoId: order.mercadopago_payment_id || '',
-      attendees: (order.tickets || []).map((ticket: any) => ({
-        id: ticket.id,
-        name: ticket.attendee_name || '',
-        lastName: '',
-        dni: ticket.attendee_dni || '',
-        email: ticket.attendee_email || '',
-        ticketType: ticket.ticket_types?.name || 'General',
-        qrToken: ticket.token || '',
-        scannedAt: ticket.used_at,
-        isRevoked: ticket.status === 'revoked',
-      })),
-    }));
+    const purchases = Array.from(orderMap.values());
+
+    console.log('[stats-v2] Stats calculated:', { totalSales, totalTickets, scannedTickets, revenue });
 
     return NextResponse.json({
       success: true,

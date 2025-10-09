@@ -92,9 +92,11 @@ export default function ScanPage() {
 
   const startCameraScanning = async () => {
     try {
+      console.log("[Scanner] Starting camera...")
       setIsScanning(true)
       setCameraError(null)
       setValidationResult(null)
+      
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { 
           facingMode: "environment",
@@ -102,15 +104,31 @@ export default function ScanPage() {
           height: { ideal: 720 }
         } 
       })
+      
+      console.log("[Scanner] Camera stream obtained")
+      
       if (videoRef.current) {
         videoRef.current.srcObject = stream
+        videoRef.current.setAttribute("playsinline", "true") // iOS compatibility
         await videoRef.current.play()
+        console.log("[Scanner] Video playing, starting scan loop...")
         // Wait for video to be ready before scanning
-        setTimeout(() => scanForQRCode(), 500)
+        setTimeout(() => {
+          console.log("[Scanner] Initiating QR scan loop")
+          scanForQRCode()
+        }, 1000)
       }
-    } catch (error) {
-      console.error("Error accessing camera:", error)
-      setCameraError("No se pudo acceder a la cámara. Usa la entrada manual.")
+    } catch (error: any) {
+      console.error("[Scanner] Error accessing camera:", error)
+      let errorMessage = "No se pudo acceder a la cámara."
+      if (error.name === 'NotAllowedError') {
+        errorMessage = "Permiso de cámara denegado. Por favor permite el acceso a la cámara."
+      } else if (error.name === 'NotFoundError') {
+        errorMessage = "No se encontró ninguna cámara en este dispositivo."
+      } else if (error.name === 'NotReadableError') {
+        errorMessage = "La cámara está siendo usada por otra aplicación."
+      }
+      setCameraError(errorMessage)
       setIsScanning(false)
     }
   }
@@ -124,7 +142,10 @@ export default function ScanPage() {
   }
 
   const scanForQRCode = () => {
-    if (!isScanning || !videoRef.current || !canvasRef.current) return
+    if (!isScanning || !videoRef.current || !canvasRef.current) {
+      console.log("[Scanner] Scan aborted - missing refs or not scanning")
+      return
+    }
     
     const video = videoRef.current
     const canvas = canvasRef.current
@@ -133,15 +154,22 @@ export default function ScanPage() {
     if (context && video.readyState === video.HAVE_ENOUGH_DATA) {
       canvas.width = video.videoWidth
       canvas.height = video.videoHeight
+      
+      if (canvas.width === 0 || canvas.height === 0) {
+        console.warn("[Scanner] Video dimensions are 0, waiting...")
+        requestAnimationFrame(scanForQRCode)
+        return
+      }
+      
       context.drawImage(video, 0, 0, canvas.width, canvas.height)
       
       const imageData = context.getImageData(0, 0, canvas.width, canvas.height)
       const code = jsQR(imageData.data, imageData.width, imageData.height, {
-        inversionAttempts: "dontInvert",
+        inversionAttempts: "attemptBoth", // Try both normal and inverted
       })
       
       if (code) {
-        console.log("QR Code detected:", code.data)
+        console.log("[Scanner] ✅ QR Code detected:", code.data)
         
         // Extract token from URL
         try {
@@ -149,19 +177,26 @@ export default function ScanPage() {
           const token = url.searchParams.get("tkn")
           
           if (token) {
+            console.log("[Scanner] Token extracted:", token)
             stopScanning()
             validateTicket(token)
+            return // Don't continue scanning
           } else {
-            console.warn("No token found in QR code URL:", code.data)
+            console.warn("[Scanner] No 'tkn' parameter found in QR URL:", code.data)
           }
         } catch (error) {
           // If it's not a URL, try to use it directly as a token
+          console.log("[Scanner] Not a URL, trying as direct token:", code.data)
           stopScanning()
           validateTicket(code.data)
+          return // Don't continue scanning
         }
       }
+    } else if (video.readyState < video.HAVE_ENOUGH_DATA) {
+      console.log("[Scanner] Video not ready yet, waiting...")
     }
     
+    // Continue scanning
     if (isScanning) {
       requestAnimationFrame(scanForQRCode)
     }
