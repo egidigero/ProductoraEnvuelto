@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase-client';
 
+// Mark as dynamic route
+export const dynamic = 'force-dynamic';
+
 /**
  * GET /api/admin/tickets
  * Search and list tickets with filters
@@ -10,7 +13,6 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const email = searchParams.get('email');
     const name = searchParams.get('name');
-    const event_id = searchParams.get('event_id');
     const status = searchParams.get('status');
     const limit = parseInt(searchParams.get('limit') || '50');
     const offset = parseInt(searchParams.get('offset') || '0');
@@ -19,23 +21,13 @@ export async function GET(request: NextRequest) {
       .from('tickets')
       .select(`
         *,
-        order:orders(
+        orders(
           buyer_name,
-          buyer_email,
-          external_reference
-        ),
-        event:events(
-          name,
-          venue,
-          start_at
+          buyer_email
         )
       `, { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
-
-    if (event_id) {
-      query = query.eq('event_id', event_id);
-    }
 
     if (status) {
       query = query.eq('status', status);

@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase-client';
 
+// Mark as dynamic route
+export const dynamic = 'force-dynamic';
+
 /**
  * GET /api/admin/orders
  * List all orders with optional filters
@@ -10,7 +13,6 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const email = searchParams.get('email');
     const status = searchParams.get('status');
-    const event_id = searchParams.get('event_id');
     const limit = parseInt(searchParams.get('limit') || '50');
     const offset = parseInt(searchParams.get('offset') || '0');
 
@@ -18,14 +20,11 @@ export async function GET(request: NextRequest) {
       .from('orders')
       .select(`
         *,
-        event:events(
-          name,
-          venue,
-          start_at
-        ),
         tickets(
           id,
-          status
+          status,
+          attendee_name,
+          attendee_email
         )
       `, { count: 'exact' })
       .order('created_at', { ascending: false })
@@ -37,10 +36,6 @@ export async function GET(request: NextRequest) {
 
     if (status) {
       query = query.eq('status', status);
-    }
-
-    if (event_id) {
-      query = query.eq('event_id', event_id);
     }
 
     const { data, error, count } = await query;
