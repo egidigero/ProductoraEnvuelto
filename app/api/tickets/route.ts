@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import type { TicketPurchase, TicketFormData } from "@/lib/types"
+import type { TicketPurchase, TicketFormData, Attendee } from "@/lib/types"
 
 // Mark as dynamic route
 export const dynamic = 'force-dynamic'
@@ -65,14 +65,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "DNI del comprador debe tener entre 7 y 8 dígitos" }, { status: 400 })
     }
 
-    const allDnis = [formData.buyerDni, ...formData.attendees.map((a) => a.dni)]
+    const allDnis = [formData.buyerDni, ...formData.attendees.map((a: Attendee) => a.dni)]
     const uniqueDnis = new Set(allDnis)
     if (uniqueDnis.size !== allDnis.length) {
       return NextResponse.json({ error: "No se pueden repetir DNIs entre asistentes" }, { status: 400 })
     }
 
     // Calcular precio total
-    const prices = {
+    const prices: Record<'early' | 'general' | 'vip', number> = {
       early: 15000,
       general: 18000,
       vip: 25000,
@@ -152,7 +152,7 @@ export async function GET() {
     tickets: ticketDatabase.map((ticket) => ({
       ...ticket,
       attendeeCount: ticket.attendees.length,
-      attendeeNames: ticket.attendees.map((a) => `${a.firstName} ${a.lastName}`).join(", "),
+      attendeeNames: ticket.attendees.map((a: Attendee) => `${a.firstName} ${a.lastName}`).join(", "),
     })),
     totalSales: ticketDatabase.reduce((sum, ticket) => sum + ticket.totalAmount, 0),
     totalTickets: ticketDatabase.reduce((sum, ticket) => sum + ticket.quantity, 0),

@@ -194,3 +194,47 @@ export interface TicketWithDetails extends Ticket {
 export interface ValidationWithDetails extends Validation {
   ticket?: TicketWithDetails;
 }
+
+// ============================================
+// FORM DATA TYPES
+// ============================================
+
+export interface Attendee {
+  firstName: string;
+  lastName: string;
+  dni: string;
+  email: string;
+  phone?: string;
+}
+
+export interface TicketFormData {
+  buyerFirstName: string;
+  buyerLastName: string;
+  buyerDni: string;
+  buyerEmail: string;
+  buyerPhone?: string;
+  attendees: Attendee[];
+  ticketType: 'early' | 'general' | 'vip';
+  quantity: number;
+}
+
+export interface TicketPurchase {
+  id: string;
+  buyerFirstName: string;
+  buyerLastName: string;
+  buyerDni: string;
+  buyerEmail: string;
+  buyerPhone?: string;
+  attendees: Attendee[];
+  ticketType: 'early' | 'general' | 'vip';
+  quantity: number;
+  basePrice?: number;
+  serviceCharge?: number;
+  totalAmount: number;
+  paymentStatus?: string;
+  purchaseDate?: Date;
+  eventDate?: Date;
+  createdAt?: string;
+  status?: OrderStatus;
+}
+
