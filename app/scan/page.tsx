@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { CheckCircle, XCircle, AlertCircle, Camera, Scan, LogOut, Loader2 } from "lucide-react"
+import { CheckCircle, XCircle, AlertCircle, Camera, Scan, LogOut, Loader2, Flashlight } from "lucide-react"
 import jsQR from "jsqr"
 
 interface ValidationResult {
@@ -36,10 +36,13 @@ export default function ScanPage() {
   const [scanningStatus, setScanningStatus] = useState<string>("Esperando código QR...")
   const [debugInfo, setDebugInfo] = useState<string>("")
   const [captureMode, setCaptureMode] = useState<boolean>(false)
+  const [torchEnabled, setTorchEnabled] = useState<boolean>(false)
+  const [torchSupported, setTorchSupported] = useState<boolean>(false)
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const scanningRef = useRef<boolean>(false)
   const lastDebugUpdateRef = useRef<number>(0)
+  const streamRef = useRef<MediaStream | null>(null)
 
   // Verify operator session on mount
   useEffect(() => {
@@ -153,6 +156,16 @@ export default function ScanPage() {
       })
       
       console.log("[Scanner] Camera stream obtained")
+      streamRef.current = stream
+      
+      // Verificar si el dispositivo soporta linterna
+      const videoTrack = stream.getVideoTracks()[0]
+      const capabilities = videoTrack.getCapabilities() as any
+      if (capabilities.torch) {
+        setTorchSupported(true)
+        console.log("[Scanner] Torch/flashlight is supported")
+      }
+      
       setScanningStatus("Cámara activa - Apunta al código QR")
       
       if (videoRef.current) {
@@ -186,9 +199,35 @@ export default function ScanPage() {
     setIsScanning(false)
     scanningRef.current = false
     setScanningStatus("Escaneo detenido")
+    setTorchEnabled(false)
     if (videoRef.current?.srcObject) {
       const stream = videoRef.current.srcObject as MediaStream
       stream.getTracks().forEach((track) => track.stop())
+    }
+    streamRef.current = null
+  }
+
+  const toggleTorch = async () => {
+    if (!streamRef.current) return
+    
+    try {
+      const videoTrack = streamRef.current.getVideoTracks()[0]
+      const capabilities = videoTrack.getCapabilities() as any
+      
+      if (!capabilities.torch) {
+        console.log("[Scanner] Torch not supported")
+        return
+      }
+      
+      const newTorchState = !torchEnabled
+      await videoTrack.applyConstraints({
+        advanced: [{ torch: newTorchState } as any]
+      })
+      
+      setTorchEnabled(newTorchState)
+      console.log(`[Scanner] Torch ${newTorchState ? 'ON' : 'OFF'}`)
+    } catch (error) {
+      console.error("[Scanner] Error toggling torch:", error)
     }
   }
 
@@ -384,6 +423,15 @@ export default function ScanPage() {
               <Button onClick={isScanning ? stopScanning : startCameraScanning} className={`flex-1 ${isScanning ? "bg-red-600 hover:bg-red-700" : "bg-purple-600 hover:bg-purple-700"}`}>
                 {isScanning ? (<><XCircle className="w-4 h-4 mr-2" />Detener</>) : (<><Camera className="w-4 h-4 mr-2" />Escanear</>)}
               </Button>
+              {isScanning && torchSupported && (
+                <Button 
+                  onClick={toggleTorch} 
+                  className={`${torchEnabled ? "bg-yellow-500 hover:bg-yellow-600" : "bg-slate-600 hover:bg-slate-700"}`} 
+                  title="Activar/Desactivar linterna"
+                >
+                  <Flashlight className={`w-4 h-4 ${torchEnabled ? 'text-white' : 'text-slate-300'}`} />
+                </Button>
+              )}
               {isScanning && (
                 <Button onClick={captureAndScan} className="bg-green-600 hover:bg-green-700" title="Capturar y escanear">
                   📸

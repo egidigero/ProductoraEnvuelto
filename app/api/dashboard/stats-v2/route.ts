@@ -6,13 +6,18 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
   try {
-    console.log('[stats-v2] Fetching all orders and tickets');
+    const searchParams = request.nextUrl.searchParams;
+    const limit = parseInt(searchParams.get('limit') || '100');
+    const offset = parseInt(searchParams.get('offset') || '0');
+    
+    console.log('[stats-v2] Fetching stats with pagination', { limit, offset });
 
-    // 1. Obtener todas las orders (sin filtrar por evento)
-    const { data: orders, error: ordersError } = await supabaseAdmin
+    // 1. Obtener orders paginadas (últimas primero)
+    const { data: orders, error: ordersError, count: totalOrders } = await supabaseAdmin
       .from('orders')
-      .select('*')
-      .order('created_at', { ascending: false });
+      .select('*', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
 
     if (ordersError) {
       console.error('Error fetching orders:', ordersError);
@@ -22,12 +27,12 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    console.log(`[stats-v2] Found ${orders?.length || 0} orders`);
+    console.log(`[stats-v2] Found ${orders?.length || 0} orders (total: ${totalOrders})`);
 
     // 2. Obtener IDs de orders
     const orderIds = orders?.map(o => o.id) || [];
 
-    // 3. Obtener todos los tickets de esas orders
+    // 3. Obtener tickets de esas orders
     let tickets: any[] = [];
     if (orderIds.length > 0) {
       const { data: ticketsData, error: ticketsError } = await supabaseAdmin
@@ -45,7 +50,7 @@ export async function GET(request: NextRequest) {
       tickets = ticketsData || [];
     }
 
-    console.log(`[stats-v2] Found ${tickets.length} tickets`);
+    console.log(`[stats-v2] Found ${tickets.length} tickets for current page`);
 
     // 4. Obtener ticket types (todos, sin filtrar por evento)
     const { data: ticketTypes, error: ttError } = await supabaseAdmin
@@ -63,20 +68,42 @@ export async function GET(request: NextRequest) {
 
     console.log(`[stats-v2] Found ${ticketTypes?.length || 0} ticket types`);
 
-    // 5. Calcular estadísticas
-    const totalTickets = tickets.length;
-    const scannedTickets = tickets.filter(t => t.status === 'used').length;
-    const revokedTickets = tickets.filter(t => t.status === 'revoked').length;
-    const validTickets = tickets.filter(t => t.status === 'valid').length;
+    // 5. Calcular estadísticas GLOBALES (sin paginación, solo agregados)
+    // Obtener totales usando count y agregaciones en DB
+    const { count: globalTotalTickets } = await supabaseAdmin
+      .from('tickets')
+      .select('*', { count: 'exact', head: true });
+    
+    const { count: globalScannedTickets } = await supabaseAdmin
+      .from('tickets')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'used');
+    
+    const { count: globalValidTickets } = await supabaseAdmin
+      .from('tickets')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'valid');
+    
+    const { count: globalRevokedTickets } = await supabaseAdmin
+      .from('tickets')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'revoked');
 
-    // Revenue total de orders pagadas
-    const paidOrders = orders?.filter(o => o.status === 'paid') || [];
-    const revenue = paidOrders.reduce((sum, order) => sum + (order.total_amount || 0), 0);
+    // Revenue total (suma de todas las orders pagadas)
+    const { data: revenueData } = await supabaseAdmin
+      .from('orders')
+      .select('total_amount')
+      .eq('status', 'paid');
+    
+    const revenue = revenueData?.reduce((sum, order) => sum + (order.total_amount || 0), 0) || 0;
 
-    // Total de ventas (orders completadas)
-    const totalSales = paidOrders.length;
+    // Total de ventas (count de orders pagadas)
+    const { count: totalSales } = await supabaseAdmin
+      .from('orders')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'paid');
 
-    // 6. Calcular datos por tipo de ticket
+    // 6. Calcular datos por tipo de ticket (solo de la página actual)
     const ticketTypeStats = ticketTypes?.map(tt => {
       const ttTickets = tickets.filter(t => t.ticket_type_id === tt.id);
       const ttScanned = ttTickets.filter(t => t.status === 'used').length;
@@ -142,20 +169,31 @@ export async function GET(request: NextRequest) {
 
     const purchases = Array.from(orderMap.values());
 
-    console.log('[stats-v2] Stats calculated:', { totalSales, totalTickets, scannedTickets, revenue });
+    console.log('[stats-v2] Stats calculated:', { 
+      totalSales, 
+      totalTickets: globalTotalTickets, 
+      scannedTickets: globalScannedTickets, 
+      revenue 
+    });
 
     return NextResponse.json({
       success: true,
       stats: {
-        totalSales,
-        totalTickets,
-        scannedTickets,
+        totalSales: totalSales || 0,
+        totalTickets: globalTotalTickets || 0,
+        scannedTickets: globalScannedTickets || 0,
         revenue,
-        pendingTickets: validTickets,
-        revokedTickets,
+        pendingTickets: globalValidTickets || 0,
+        revokedTickets: globalRevokedTickets || 0,
       },
       ticketTypes: ticketTypeStats,
       purchases,
+      pagination: {
+        limit,
+        offset,
+        totalOrders: totalOrders || 0,
+        hasMore: (offset + limit) < (totalOrders || 0),
+      },
     });
   } catch (error) {
     console.error('Error in GET /api/dashboard/stats:', error);

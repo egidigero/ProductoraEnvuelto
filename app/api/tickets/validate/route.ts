@@ -15,11 +15,13 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const { token } = body
 
-    console.log('[VALIDATE] Received token:', token ? token.substring(0, 8) + '...' : 'empty')
+    // Solo log en desarrollo
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[VALIDATE] Received token:', token ? token.substring(0, 8) + '...' : 'empty')
+    }
 
     // Validate input
     if (!token) {
-      console.log('[VALIDATE] No token provided')
       return NextResponse.json(
         {
           success: false,
@@ -31,7 +33,6 @@ export async function POST(request: NextRequest) {
 
     // Validate token format
     if (!isValidToken(token)) {
-      console.log('[VALIDATE] Invalid token format:', token)
       return NextResponse.json(
         {
           success: false,
@@ -43,7 +44,6 @@ export async function POST(request: NextRequest) {
 
     // Hash the token
     const token_hash = hashToken(token)
-    console.log('[VALIDATE] Token hash:', token_hash.substring(0, 16) + '...')
 
     // Get client IP address
     const remote_addr =
@@ -76,7 +76,9 @@ export async function POST(request: NextRequest) {
       )
       .single()
 
-    console.log('[VALIDATE] Update result:', updatedTicket ? 'SUCCESS' : 'FAILED', updateError)
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[VALIDATE] Update result:', updatedTicket ? 'SUCCESS' : 'FAILED', updateError)
+    }
 
     if (updatedTicket) {
       // SUCCESS: Ticket was valid and is now marked as used
