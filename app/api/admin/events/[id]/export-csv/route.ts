@@ -1,36 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase-client';
 
+// Mark as dynamic since we don't have events table
+export const dynamic = 'force-dynamic';
+
 type Params = {
   id: string;
 };
 
 /**
  * GET /api/admin/events/[id]/export-csv
- * Export tickets for an event as CSV
+ * Export all tickets as CSV (event ID is ignored since we don't use events table)
  */
 export async function GET(
   request: NextRequest,
   { params }: { params: Params }
 ) {
   try {
-    const { id } = params;
-
-    // Fetch event
-    const { data: event, error: eventError } = await supabaseAdmin
-      .from('events')
-      .select('name')
-      .eq('id', id)
-      .single();
-
-    if (eventError || !event) {
-      return NextResponse.json(
-        { error: 'Event not found' },
-        { status: 404 }
-      );
-    }
-
-    // Fetch all tickets for this event
+    // Fetch all tickets (ignoring event_id since we removed it)
     const { data: tickets, error: ticketsError } = await supabaseAdmin
       .from('tickets')
       .select(`
@@ -38,15 +25,12 @@ export async function GET(
         status,
         used_at,
         created_at,
-        order:orders!inner(
-          buyer_name,
-          buyer_email,
-          external_reference,
-          amount,
-          paid_at
-        )
+        attendee_name,
+        attendee_email,
+        attendee_dni,
+        ticket_type_name,
+        order_id
       `)
-      .eq('event_id', id)
       .order('created_at', { ascending: true });
 
     if (ticketsError) {
@@ -57,31 +41,55 @@ export async function GET(
       );
     }
 
+    if (!tickets || tickets.length === 0) {
+      return NextResponse.json(
+        { error: 'No tickets found' },
+        { status: 404 }
+      );
+    }
+
+    // Fetch orders separately to get buyer info
+    const orderIds = [...new Set(tickets.map(t => t.order_id).filter(Boolean))];
+    const { data: orders } = await supabaseAdmin
+      .from('orders')
+      .select('id, buyer_name, buyer_email, total_amount, created_at')
+      .in('id', orderIds);
+
+    // Create a map of orders by ID
+    const ordersMap = new Map();
+    orders?.forEach(order => {
+      ordersMap.set(order.id, order);
+    });
+
     // Build CSV content
     const headers = [
       'Ticket ID',
-      'Order Reference',
+      'Attendee Name',
+      'Attendee Email',
+      'Attendee DNI',
+      'Ticket Type',
       'Buyer Name',
       'Buyer Email',
-      'Amount',
       'Status',
       'Purchase Date',
       'Used At',
     ];
 
-    const rows = tickets?.map(ticket => {
-      const order = Array.isArray(ticket.order) ? ticket.order[0] : ticket.order;
+    const rows = tickets.map(ticket => {
+      const order = ordersMap.get(ticket.order_id);
       return [
         ticket.id,
-        order?.external_reference || '',
+        ticket.attendee_name || '',
+        ticket.attendee_email || '',
+        ticket.attendee_dni || '',
+        ticket.ticket_type_name || '',
         order?.buyer_name || '',
         order?.buyer_email || '',
-        order?.amount || '0',
         ticket.status,
         ticket.created_at,
         ticket.used_at || '',
       ];
-    }) || [];
+    });
 
     // Format CSV
     const csvContent = [
@@ -103,7 +111,7 @@ export async function GET(
       status: 200,
       headers: {
         'Content-Type': 'text/csv',
-        'Content-Disposition': `attachment; filename="tickets-${event.name.replace(/[^a-z0-9]/gi, '-')}-${Date.now()}.csv"`,
+        'Content-Disposition': `attachment; filename="tickets-export-${Date.now()}.csv"`,
       },
     });
 
