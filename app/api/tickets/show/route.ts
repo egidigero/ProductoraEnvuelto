@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase-client';
 import { hashToken, isValidToken, generateQRCodeDataURL, createTicketURL } from '@/lib/token-utils';
 
+// Mark as dynamic route
+export const dynamic = 'force-dynamic'
+
 /**
  * GET /api/tickets/show?tkn=...
  * Show a ticket's QR code (for web viewing)

@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase-client';
 import type { TicketType } from '@/lib/types';
 
+// Mark as dynamic route
+export const dynamic = 'force-dynamic'
+
 // GET /api/ticket-types - Obtener todos los tipos de ticket (sin filtro por evento)
 export async function GET(request: NextRequest) {
   try {

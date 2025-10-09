@@ -4,6 +4,9 @@ import { generateToken, hashToken, generateQRCode, createTicketURL } from '@/lib
 import { sendTicketEmail } from '@/lib/email-service';
 import type { CreateOrderRequest } from '@/lib/types';
 
+// Mark as dynamic route
+export const dynamic = 'force-dynamic'
+
 /**
  * POST /api/orders/create
  * Create a new order and generate tickets with QR codes

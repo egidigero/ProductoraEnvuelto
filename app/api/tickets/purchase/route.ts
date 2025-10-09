@@ -3,6 +3,9 @@ import { createClient } from "@supabase/supabase-js"
 import { generateToken, hashToken, generateQRCodeDataURL, createTicketURL } from "@/lib/token-utils"
 import { sendTicketEmail } from "@/lib/email-service"
 
+// Mark as dynamic route
+export const dynamic = 'force-dynamic'
+
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!

@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 
+// Mark as dynamic route
+export const dynamic = 'force-dynamic'
+
 /**
  * POST /api/auth/logout
  * Clear operator session

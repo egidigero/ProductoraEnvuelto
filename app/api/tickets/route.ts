@@ -1,6 +1,9 @@
 import { type NextRequest, NextResponse } from "next/server"
 import type { TicketPurchase, TicketFormData } from "@/lib/types"
 
+// Mark as dynamic route
+export const dynamic = 'force-dynamic'
+
 // Simulación de base de datos (reemplazar con tu DB real)
 const ticketDatabase: TicketPurchase[] = []
 

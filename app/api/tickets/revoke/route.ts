@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase-client';
 
+// Mark as dynamic route
+export const dynamic = 'force-dynamic'
+
 /**
  * POST /api/tickets/revoke
  * Revoke a ticket (admin action)

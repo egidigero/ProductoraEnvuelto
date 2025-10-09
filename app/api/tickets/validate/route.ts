@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-client'
 import { hashToken, isValidToken } from '@/lib/token-utils'
 
+// Mark as dynamic route
+export const dynamic = 'force-dynamic'
+
 /**
  * POST /api/tickets/validate
  * Atomically validate and mark a ticket as used
