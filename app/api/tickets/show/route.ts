@@ -51,7 +51,7 @@ export async function GET(request: NextRequest) {
           start_at
         )
       `)
-      .eq('token_hash', token_hash)
+      .eq('token', token_hash)
       .single();
 
     if (ticketError || !ticket) {

@@ -155,7 +155,7 @@ export async function POST(request: NextRequest) {
         .insert({
           order_id: order.id,
           ticket_type_id,
-          token_hash,
+          token: token_hash,
           status: 'valid',
           metadata: {
             ticket_number: i + 1,
